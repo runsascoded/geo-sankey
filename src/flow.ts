@@ -6,6 +6,15 @@ import type { RibbonArrowOpts } from './ribbon'
 
 const { cos, sin, PI } = Math
 
+function straightLine(start: LatLon, end: LatLon, n = 20): LatLon[] {
+  const pts: LatLon[] = []
+  for (let i = 0; i <= n; i++) {
+    const t = i / n
+    pts.push([start[0] + (end[0] - start[0]) * t, start[1] + (end[1] - start[1]) * t])
+  }
+  return pts
+}
+
 /** Get the representative position of a node (for sorting). */
 function childPos(node: FlowNode): LatLon {
   return node.pos
@@ -81,7 +90,11 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
       curveStart = [node.pos[0] + cos(rad) * depLen, node.pos[1] + sin(rad) * depLen * ls]
       straightStart.push(node.pos)
     }
-    const curvePts = directedBezier(curveStart, targetPos, departBearing, arriveBearing)
+    // For terminal trunks (no arriveBearing), use a straight line to the destination
+    // instead of a bezier, so the trunk comes straight in
+    const curvePts = arriveBearing != null
+      ? directedBezier(curveStart, targetPos, departBearing, arriveBearing)
+      : straightLine(curveStart, targetPos)
     let path = [...straightStart, ...curvePts, ...(straightEnd ? [straightEnd] : [])]
     if (reverse) path = [...path].reverse()
 
