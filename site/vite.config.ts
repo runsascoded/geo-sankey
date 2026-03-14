@@ -5,7 +5,7 @@ const allowedHosts = process.env.VITE_ALLOWED_HOSTS?.split(',') ?? []
 
 export default defineConfig({
   server: {
-    port: 3848,
+    port: 7251,
     host: true,
     allowedHosts,
   },

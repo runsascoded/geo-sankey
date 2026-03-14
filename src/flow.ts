@@ -6,6 +6,11 @@ import type { RibbonArrowOpts } from './ribbon'
 
 const { cos, sin, PI } = Math
 
+/** Get the representative position of a node (for sorting). */
+function childPos(node: FlowNode): LatLon {
+  return node.pos
+}
+
 /** Compute the total weight of a flow tree node. */
 export function nodeWeight(node: FlowNode): number {
   return node.type === 'source'
@@ -56,7 +61,16 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
     const width = nodeWidth(node, pxPerWeight)
     const hw = pxToHalfDeg(width, zoom, geoScale, refLat)
 
-    const departBearing = node.type === 'merge' ? node.bearing : undefined
+    let departBearing: number | undefined
+    if (node.type === 'merge') {
+      departBearing = node.bearing
+    } else {
+      // Aim departure toward the junction point (or destination for root)
+      const aimAt = straightEnd ?? targetPos
+      const dLat = aimAt[0] - node.pos[0]
+      const dLon = (aimAt[1] - node.pos[1]) * cos(refLat * PI / 180)
+      departBearing = Math.atan2(dLon, dLat) * 180 / PI
+    }
     let curveStart = node.pos
     const straightStart: LatLon[] = []
     if (node.type === 'merge') {
@@ -87,10 +101,25 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
       const fwdLat = cos(rad), fwdLon = sin(rad)
       const approachLen = hw * 1.5
 
-      const childWidths = node.children.map(c => nodeWidth(c, pxPerWeight))
+      // Sort children by angular position around merge to avoid crossings.
+      // Order counterclockwise from -perpLeft direction (bearing + 90°).
+      const cosRef = cos(refLat * PI / 180)
+      const antiPerpAngle = node.bearing + 90
+      const childIndices = node.children.map((_, i) => i)
+      childIndices.sort((a, b) => {
+        const aPos = childPos(node.children[a])
+        const bPos = childPos(node.children[b])
+        const aAngle = Math.atan2((aPos[1] - node.pos[1]) * cosRef, aPos[0] - node.pos[0]) * 180 / PI
+        const bAngle = Math.atan2((bPos[1] - node.pos[1]) * cosRef, bPos[0] - node.pos[0]) * 180 / PI
+        const aCCW = ((aAngle - antiPerpAngle) % 360 + 360) % 360
+        const bCCW = ((bAngle - antiPerpAngle) % 360 + 360) % 360
+        return aCCW - bCCW
+      })
+
+      const childWidths = childIndices.map(i => nodeWidth(node.children[i], pxPerWeight))
       const totalW = childWidths.reduce((s, w) => s + w, 0)
       let cumW = 0
-      for (let ci = 0; ci < node.children.length; ci++) {
+      for (let ci = 0; ci < childIndices.length; ci++) {
         const cw = childWidths[ci]
         const centerOffset = -totalW / 2 + cumW + cw / 2
         cumW += cw
@@ -103,7 +132,7 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
           childEnd[0] - fwdLat * approachLen,
           childEnd[1] - fwdLon * approachLen * ls,
         ]
-        renderNode(node.children[ci], childApproach, false, node.bearing, childEnd)
+        renderNode(node.children[childIndices[ci]], childApproach, false, node.bearing, childEnd)
       }
     }
   }
