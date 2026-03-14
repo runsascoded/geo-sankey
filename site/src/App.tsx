@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import BasicFlowTree from './examples/BasicFlowTree'
 import MultiTreeMerge from './examples/MultiTreeMerge'
+import ParallelRibbons from './examples/ParallelRibbons'
 
 const examples = [
-  { id: 'basic', label: 'Basic Flow Tree', component: BasicFlowTree },
-  { id: 'multi', label: 'Multi-Tree Merge', component: MultiTreeMerge },
+  { id: 'multi', label: 'Flow Tree Merge', component: MultiTreeMerge },
+  { id: 'parallel', label: 'Parallel Ribbons', component: ParallelRibbons },
 ] as const
 
 export default function App() {
