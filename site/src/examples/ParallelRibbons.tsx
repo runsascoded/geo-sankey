@@ -7,7 +7,14 @@ import { useLLZ } from '../llz'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 interface Station { id: string; name: string; pos: LatLon }
-interface Route { id: string; name: string; color: string; stops: string[] }
+interface Route {
+  id: string
+  name: string
+  color: string
+  stops: string[]
+  /** Optional waypoints between stops: "from→to" => intermediate points */
+  waypoints?: Record<string, LatLon[]>
+}
 
 const stations: Station[] = [
   { id: 'nwk',   name: 'Newark',            pos: [40.7355, -74.1640] },
@@ -25,19 +32,37 @@ const stations: Station[] = [
   { id: '33rd',  name: '33rd Street',       pos: [40.7490, -73.9884] },
 ]
 
-// Order matters for shared-segment offset assignment.
-// HOB-33 before JSQ-33 so blue is left of yellow on Manhattan segments.
+// Order matters: determines left-to-right stacking on shared segments.
 const routes: Route[] = [
-  { id: 'nwk-wtc', name: 'NWK–WTC',  color: '#d32f2f', stops: ['nwk', 'har', 'jsq', 'grove', 'ep', 'wtc'] },
-  { id: 'hob-wtc', name: 'HOB–WTC',  color: '#2e7d32', stops: ['hob', 'np', 'ep', 'wtc'] },
-  { id: 'hob-33',  name: 'HOB–33',   color: '#1565c0', stops: ['hob', '14th', '23rd', '33rd'] },
-  { id: 'jsq-33',  name: 'JSQ–33',   color: '#f9a825', stops: ['jsq', 'grove', 'np', 'chr', '9th', '14th', '23rd', '33rd'] },
+  {
+    id: 'nwk-wtc', name: 'NWK–WTC', color: '#d32f2f',
+    stops: ['nwk', 'har', 'jsq', 'grove', 'ep', 'wtc'],
+    waypoints: {
+      // Smooth curve from JSQ down to Grove
+      'jsq→grove': [[40.7280, -74.0560], [40.7230, -74.0500]],
+    },
+  },
+  {
+    id: 'hob-wtc', name: 'HOB–WTC', color: '#2e7d32',
+    stops: ['hob', 'np', 'ep', 'wtc'],
+  },
+  {
+    id: 'hob-33', name: 'HOB–33', color: '#1565c0',
+    stops: ['hob', '14th', '23rd', '33rd'],
+  },
+  {
+    id: 'jsq-33', name: 'JSQ–33', color: '#f9a825',
+    stops: ['jsq', 'grove', 'np', 'chr', '9th', '14th', '23rd', '33rd'],
+    waypoints: {
+      'jsq→grove': [[40.7280, -74.0560], [40.7230, -74.0500]],
+    },
+  },
 ]
 
 const stationMap = new Map(stations.map(s => [s.id, s]))
 
-const RIBBON_W = 1.2
-const GAP = 0.3
+const RIBBON_W = 1.8
+const GAP = 0.4
 
 function segKey(a: string, b: string) {
   return a < b ? `${a}-${b}` : `${b}-${a}`
@@ -79,12 +104,21 @@ function stationRouteColors(stationId: string): string[] {
   return routes.filter(r => r.stops.includes(stationId)).map(r => r.color)
 }
 
-/** Create a rounded-rect SVG data URL for use as a MapLibre icon */
+/** Get waypoints for a segment, respecting direction */
+function getWaypoints(route: Route, fromId: string, toId: string): LatLon[] {
+  if (!route.waypoints) return []
+  const fwd = route.waypoints[`${fromId}→${toId}`]
+  if (fwd) return fwd
+  const rev = route.waypoints[`${toId}→${fromId}`]
+  if (rev) return [...rev].reverse()
+  return []
+}
+
 function roundedRectSVG(w: number, h: number): string {
-  const r = 4
+  const r = 5
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
-    `<rect x="1" y="1" width="${w - 2}" height="${h - 2}" rx="${r}" ry="${r}" ` +
-    `fill="white" stroke="#333" stroke-width="2"/>` +
+    `<rect x="1.5" y="1.5" width="${w - 3}" height="${h - 3}" rx="${r}" ry="${r}" ` +
+    `fill="white" stroke="#222" stroke-width="2.5"/>` +
     `</svg>`
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
@@ -97,7 +131,6 @@ export default function ParallelRibbons() {
   const mapRef = useRef<MapRef>(null)
   const offsets = useMemo(() => computeOffsets(routes), [])
 
-  // Register rounded-rect icon on map load
   useEffect(() => {
     const map = mapRef.current?.getMap()
     if (!map) return
@@ -105,7 +138,7 @@ export default function ParallelRibbons() {
       if (map.hasImage('rounded-rect')) return
       const img = new Image()
       img.onload = () => { map.addImage('rounded-rect', img) }
-      img.src = roundedRectSVG(20, 16)
+      img.src = roundedRectSVG(26, 18)
     }
     if (map.loaded()) addIcon()
     else map.on('load', addIcon)
@@ -120,7 +153,9 @@ export default function ParallelRibbons() {
         const b = stationMap.get(route.stops[i + 1])!
         const key = segKey(route.stops[i], route.stops[i + 1])
         const offsetPx = offsets.get(key)?.get(route.id) ?? 0
-        const { path: smooth } = smoothPath([a.pos, b.pos], 16)
+        const waypts = getWaypoints(route, route.stops[i], route.stops[i + 1])
+        const rawPts: LatLon[] = [a.pos, ...waypts, b.pos]
+        const { path: smooth } = smoothPath(rawPts, 16)
         const offsetSmooth = offsetPathByPx(smooth, offsetPx, llz.zoom, REF_LAT)
         const ring = ribbon(offsetSmooth, halfW, REF_LAT)
         if (ring.length) {
@@ -175,11 +210,10 @@ export default function ParallelRibbons() {
             <Layer
               id="ribbons-fill"
               type="fill"
-              paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': 0.9 }}
+              paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': 0.95 }}
             />
           </Source>
           <Source id="stations" type="geojson" data={stationFeatures}>
-            {/* Transfer stations: rounded rect icon */}
             <Layer
               id="station-transfer"
               type="symbol"
@@ -187,18 +221,17 @@ export default function ParallelRibbons() {
               layout={{
                 'icon-image': 'rounded-rect',
                 'icon-allow-overlap': true,
-                'icon-size': 1,
+                'icon-size': 1.2,
               }}
             />
-            {/* Simple stations: small circle */}
             <Layer
               id="station-simple"
               type="circle"
               filter={['==', ['get', 'isTransfer'], false]}
               paint={{
                 'circle-radius': 4,
-                'circle-color': '#fff',
-                'circle-stroke-color': '#555',
+                'circle-color': '#222',
+                'circle-stroke-color': '#fff',
                 'circle-stroke-width': 1.5,
               }}
             />
@@ -208,9 +241,9 @@ export default function ParallelRibbons() {
               layout={{
                 'text-field': ['get', 'name'],
                 'text-size': 11,
-                'text-offset': [0, 1.3],
+                'text-offset': [0, 1.4],
                 'text-anchor': 'top',
-                'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+                'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
               }}
               paint={{
                 'text-color': '#222',
