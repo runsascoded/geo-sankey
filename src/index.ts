@@ -1,5 +1,5 @@
 export type { LatLon, FlowNode, FlowTree, RibbonProperties, GeoOpts } from './types'
-export { lngScale, degPerPxZ12, pxToHalfDeg, pxToDeg } from './geo'
+export { lngScale, degPerPxZ12, pxToHalfDeg, pxToDeg, toGeoJSON, offsetPath } from './geo'
 export {
   cubicBezier,
   smoothPath,

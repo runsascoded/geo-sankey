@@ -1,4 +1,6 @@
-const { cos, pow, PI } = Math
+import type { LatLon } from './types'
+
+const { cos, pow, sqrt, PI } = Math
 
 /** Longitude-degree scale factor at a reference latitude.
  *  Returns lng degrees per lat degree. */
@@ -30,4 +32,23 @@ export function pxToDeg(
   refLat: number,
 ): number {
   return px * degPerPxZ12(refLat) * pow(2, (geoScale - 1) * (zoom - 12))
+}
+
+/** Convert [lat, lon][] path to GeoJSON [lon, lat][] coordinates. */
+export function toGeoJSON(path: LatLon[]): [number, number][] {
+  return path.map(([lat, lon]) => [lon, lat])
+}
+
+/** Offset a path laterally (perpendicular to start→end direction). */
+export function offsetPath(path: LatLon[], offset: number): LatLon[] {
+  if (path.length < 2 || offset === 0) return path
+  const [sLat, sLon] = path[0]
+  const [eLat, eLon] = path[path.length - 1]
+  const dx = eLon - sLon, dy = eLat - sLat
+  const len = sqrt(dx * dx + dy * dy)
+  if (len === 0) return path
+  const perpLat = -dx / len
+  const perpLon = dy / len
+  const k = offset * 0.0004
+  return path.map(([lat, lon]) => [lat + perpLat * k, lon + perpLon * k])
 }
