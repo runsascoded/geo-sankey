@@ -1,7 +1,7 @@
 import type { LatLon, FlowNode, FlowTree, RibbonProperties } from './types'
 import { lngScale, pxToHalfDeg, pxToDeg } from './geo'
 import { directedBezier, bearingPerpLeft } from './path'
-import { ribbon, ribbonArrow, ringFeature } from './ribbon'
+import { ribbon, ribbonArrow, ribbonEdges, ribbonArrowEdges, ringFeature } from './ribbon'
 import type { RibbonArrowOpts } from './ribbon'
 
 const { cos, sin, PI } = Math
@@ -22,9 +22,8 @@ function childPos(node: FlowNode): LatLon {
 
 /** Compute the total weight of a flow tree node. */
 export function nodeWeight(node: FlowNode): number {
-  return node.type === 'source'
-    ? node.weight
-    : node.children.reduce((s, c) => s + nodeWeight(c), 0)
+  if (node.type === 'source') return node.weight
+  return node.children.reduce((s, c) => s + nodeWeight(c), 0)
 }
 
 /** Collect all leaf source positions from a flow tree. */
@@ -56,7 +55,11 @@ export function nodeWidth(node: FlowNode, pxPerWeight: (w: number) => number): n
 }
 
 /** Render a single flow tree, returning GeoJSON polygon features. */
-export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSON.Feature[] {
+export function renderFlowTree(
+  tree: FlowTree,
+  opts: RenderFlowTreeOpts,
+  junctionMap?: Map<string, JunctionSlot>,
+): GeoJSON.Feature[] {
   const features: GeoJSON.Feature[] = []
   const { refLat, zoom, geoScale, color, key, pxPerWeight, arrowWing, arrowLen, reverse } = opts
 
@@ -70,19 +73,21 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
     const width = nodeWidth(node, pxPerWeight)
     const hw = pxToHalfDeg(width, zoom, geoScale, refLat)
 
+    // Skip weight-only placeholder sources (empty label = no visual path)
+    if (node.type === 'source' && !node.label) return
+
+    const isMergeOrSplit = node.type === 'merge' || node.type === 'split'
     let departBearing: number | undefined
-    if (node.type === 'merge') {
+    if (isMergeOrSplit) {
+      departBearing = node.bearing
+    } else if (node.type === 'source' && node.bearing != null) {
       departBearing = node.bearing
     } else {
-      // Aim departure toward the junction point (or destination for root)
-      const aimAt = straightEnd ?? targetPos
-      const dLat = aimAt[0] - node.pos[0]
-      const dLon = (aimAt[1] - node.pos[1]) * cos(refLat * PI / 180)
-      departBearing = Math.atan2(dLon, dLat) * 180 / PI
+      departBearing = arriveBearing
     }
     let curveStart = node.pos
     const straightStart: LatLon[] = []
-    if (node.type === 'merge') {
+    if (isMergeOrSplit) {
       const hw2 = pxToHalfDeg(width, zoom, geoScale, refLat)
       const depLen = hw2 * 1.5
       const rad = node.bearing * PI / 180
@@ -92,21 +97,39 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
     }
     // For terminal trunks (no arriveBearing), use a straight line to the destination
     // instead of a bezier, so the trunk comes straight in
-    const curvePts = arriveBearing != null
-      ? directedBezier(curveStart, targetPos, departBearing, arriveBearing)
-      : straightLine(curveStart, targetPos)
-    let path = [...straightStart, ...curvePts, ...(straightEnd ? [straightEnd] : [])]
-    if (reverse) path = [...path].reverse()
+    // For terminal split nodes, the trunk goes from destPos (origin) to the
+    // split pos — reversed direction, no arrowhead.
+    const isTerminalSplit = terminal && node.type === 'split'
+    let path: LatLon[]
+    if (isTerminalSplit) {
+      // Trunk: origin (targetPos) → split point (node.pos), straight
+      path = straightLine(targetPos, node.pos)
+      if (reverse) path = [...path].reverse()
+    } else {
+      let curvePts: LatLon[]
+      if (arriveBearing != null) {
+        curvePts = directedBezier(curveStart, targetPos, departBearing, arriveBearing)
+      } else if (terminal) {
+        // Terminal trunk: straight from node pos to dest (no departure offset)
+        curvePts = straightLine(node.pos, targetPos)
+      } else {
+        curvePts = straightLine(curveStart, targetPos)
+      }
+      path = terminal && arriveBearing == null
+        ? [...curvePts]
+        : [...straightStart, ...curvePts, ...(straightEnd ? [straightEnd] : [])]
+      if (reverse) path = [...path].reverse()
+    }
 
     const arrowOpts: RibbonArrowOpts = { arrowWingFactor: arrowWing, arrowLenFactor: arrowLen, widthPx: width }
-    const ring = terminal
+    const ring = (terminal && !isTerminalSplit)
       ? ribbonArrow(path, hw, refLat, arrowOpts)
       : ribbon(path, hw, refLat)
     if (ring.length) {
       features.push(ringFeature<RibbonProperties>(ring, { color, width, key, opacity: 1 }))
     }
 
-    if (node.type === 'merge') {
+    if (node.type === 'merge' || node.type === 'split') {
       const [perpLat, perpLon] = bearingPerpLeft(node.bearing)
       const ls = lngScale(refLat)
 
@@ -114,20 +137,10 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
       const fwdLat = cos(rad), fwdLon = sin(rad)
       const approachLen = hw * 1.5
 
-      // Sort children by angular position around merge to avoid crossings.
-      // Order counterclockwise from -perpLeft direction (bearing + 90°).
+      // Children order = user-specified stacking order (first child = right/south
+      // of bearing, last = left/north). No auto-sort — user controls the order.
       const cosRef = cos(refLat * PI / 180)
-      const antiPerpAngle = node.bearing + 90
       const childIndices = node.children.map((_, i) => i)
-      childIndices.sort((a, b) => {
-        const aPos = childPos(node.children[a])
-        const bPos = childPos(node.children[b])
-        const aAngle = Math.atan2((aPos[1] - node.pos[1]) * cosRef, aPos[0] - node.pos[0]) * 180 / PI
-        const bAngle = Math.atan2((bPos[1] - node.pos[1]) * cosRef, bPos[0] - node.pos[0]) * 180 / PI
-        const aCCW = ((aAngle - antiPerpAngle) % 360 + 360) % 360
-        const bCCW = ((bAngle - antiPerpAngle) % 360 + 360) % 360
-        return aCCW - bCCW
-      })
 
       const childWidths = childIndices.map(i => nodeWidth(node.children[i], pxPerWeight))
       const totalW = childWidths.reduce((s, w) => s + w, 0)
@@ -137,15 +150,55 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
         const centerOffset = -totalW / 2 + cumW + cw / 2
         cumW += cw
         const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
-        const childEnd: LatLon = [
+        // Junction offset point (on the perpendicular at the node)
+        const junctionPt: LatLon = [
           node.pos[0] + perpLat * offsetDeg,
           node.pos[1] + perpLon * offsetDeg * ls,
         ]
-        const childApproach: LatLon = [
-          childEnd[0] - fwdLat * approachLen,
-          childEnd[1] - fwdLon * approachLen * ls,
-        ]
-        renderNode(node.children[childIndices[ci]], childApproach, false, node.bearing, childEnd)
+        if (node.type === 'merge') {
+          // Straight approach segment along bearing → junction point.
+          // This guarantees the child ribbon's last segment is parallel to the
+          // trunk, producing flush edges at the junction.
+          const childApproach: LatLon = [
+            junctionPt[0] - fwdLat * approachLen,
+            junctionPt[1] - fwdLon * approachLen * ls,
+          ]
+          renderNode(node.children[childIndices[ci]], childApproach, false, node.bearing, junctionPt)
+        } else {
+          // Split: straight departure from offset junction point along bearing,
+          // then bezier curves to child position. If the child's position
+          // matches a merge junction (from the compiled map), target the
+          // offset position instead of the merge center.
+          const splitChild = node.children[childIndices[ci]]
+          let childTarget = splitChild.pos
+          let childArriveBearing: number | undefined
+          if (junctionMap) {
+            const slot = junctionMap.get(posKey(splitChild.pos))
+            if (slot) {
+              childTarget = slot.offset
+              childArriveBearing = slot.bearing
+            }
+          }
+          const childDepart: LatLon = [
+            junctionPt[0] + fwdLat * approachLen,
+            junctionPt[1] + fwdLon * approachLen * ls,
+          ]
+          const childW = nodeWidth(splitChild, pxPerWeight)
+          const childHw = pxToHalfDeg(childW, zoom, geoScale, refLat)
+          const arrBearing = childArriveBearing
+            ?? (splitChild.type === 'source' && 'bearing' in splitChild && splitChild.bearing != null
+              ? splitChild.bearing : node.bearing)
+          const curvePts = directedBezier(childDepart, childTarget, node.bearing, arrBearing)
+          let splitPath: LatLon[] = [junctionPt, ...curvePts]
+          if (reverse) splitPath = [...splitPath].reverse()
+          const splitRing = ribbon(splitPath, childHw, refLat)
+          if (splitRing.length) {
+            features.push(ringFeature<RibbonProperties>(splitRing, { color, width: childW, key, opacity: 1 }))
+          }
+          if (splitChild.type !== 'source') {
+            renderNode(splitChild, splitChild.pos, false)
+          }
+        }
       }
     }
   }
@@ -154,14 +207,404 @@ export function renderFlowTree(tree: FlowTree, opts: RenderFlowTreeOpts): GeoJSO
   return features
 }
 
-/** Render multiple flow trees, returning a GeoJSON FeatureCollection. */
-export function renderFlows(
+/** Edge data for a single branch (source → junction or junction → dest). */
+interface BranchEdges {
+  left: [number, number][]
+  right: [number, number][]
+  tip?: [number, number]
+}
+
+/** Render a single flow tree as ONE polygon feature (no seams at junctions). */
+export function renderFlowTreeSinglePoly(
+  tree: FlowTree,
+  opts: RenderFlowTreeOpts,
+  junctionMap?: Map<string, JunctionSlot>,
+): GeoJSON.Feature {
+  const { refLat, zoom, geoScale, color, key, pxPerWeight, arrowWing, arrowLen, reverse } = opts
+
+  /**
+   * Recursively collect edges for a node's branch (the ribbon from this node
+   * to its target) and stitch children into one outer contour.
+   *
+   * Returns the outer left/right edges of the entire subtree as seen from
+   * source→destination direction, plus an optional arrow tip.
+   */
+  function collectEdges(
+    node: FlowNode,
+    targetPos: LatLon,
+    terminal: boolean,
+    arriveBearing?: number,
+    straightEnd?: LatLon,
+  ): BranchEdges | null {
+    const width = nodeWidth(node, pxPerWeight)
+    const hw = pxToHalfDeg(width, zoom, geoScale, refLat)
+
+    // Skip weight-only placeholder sources (empty label = no visual path)
+    if (node.type === 'source' && !node.label) return null
+
+    const isMergeOrSplit = node.type === 'merge' || node.type === 'split'
+    let departBearing: number | undefined
+    if (isMergeOrSplit) {
+      departBearing = node.bearing
+    } else if (node.type === 'source' && node.bearing != null) {
+      departBearing = node.bearing
+    } else {
+      departBearing = arriveBearing
+    }
+    let curveStart = node.pos
+    const straightStart: LatLon[] = []
+    if (isMergeOrSplit) {
+      const hw2 = pxToHalfDeg(width, zoom, geoScale, refLat)
+      const depLen = hw2 * 1.5
+      const rad = node.bearing * PI / 180
+      const ls = lngScale(refLat)
+      curveStart = [node.pos[0] + cos(rad) * depLen, node.pos[1] + sin(rad) * depLen * ls]
+      straightStart.push(node.pos)
+    }
+
+    const isTerminalSplit = terminal && node.type === 'split'
+    let path: LatLon[]
+    if (isTerminalSplit) {
+      path = straightLine(targetPos, node.pos)
+      if (reverse) path = [...path].reverse()
+    } else {
+      let curvePts: LatLon[]
+      if (arriveBearing != null) {
+        curvePts = directedBezier(curveStart, targetPos, departBearing, arriveBearing)
+      } else if (terminal) {
+        curvePts = straightLine(node.pos, targetPos)
+      } else {
+        curvePts = straightLine(curveStart, targetPos)
+      }
+      path = terminal && arriveBearing == null
+        ? [...curvePts]
+        : [...straightStart, ...curvePts, ...(straightEnd ? [straightEnd] : [])]
+      if (reverse) path = [...path].reverse()
+    }
+
+    const arrowOpts: RibbonArrowOpts = { arrowWingFactor: arrowWing, arrowLenFactor: arrowLen, widthPx: width }
+
+    // Leaf node (source) or terminal split trunk: just return edges for this segment
+    if (node.type === 'source' || isTerminalSplit) {
+      if (terminal && !isTerminalSplit) {
+        const ae = ribbonArrowEdges(path, hw, refLat, arrowOpts)
+        if (ae.left.length === 0) return null
+        return { left: ae.left, right: ae.right, tip: ae.tip }
+      }
+      const e = ribbonEdges(path, hw, refLat)
+      if (e.left.length === 0) return null
+      return { left: e.left, right: e.right }
+    }
+
+    // Merge or split node: compute trunk edges and stitch with children
+    let trunkEdges: BranchEdges
+    if (terminal && !isTerminalSplit) {
+      const ae = ribbonArrowEdges(path, hw, refLat, arrowOpts)
+      if (ae.left.length === 0) return null
+      trunkEdges = { left: ae.left, right: ae.right, tip: ae.tip }
+    } else {
+      const e = ribbonEdges(path, hw, refLat)
+      if (e.left.length === 0) return null
+      trunkEdges = { left: e.left, right: e.right }
+    }
+
+    if (node.type === 'merge') {
+      return stitchMerge(node, trunkEdges, terminal)
+    } else {
+      // Split node
+      return stitchSplit(node, trunkEdges, terminal)
+    }
+  }
+
+  function stitchMerge(
+    node: FlowNode & { type: 'merge' },
+    trunkEdges: BranchEdges,
+    terminal: boolean,
+  ): BranchEdges | null {
+    const [perpLat, perpLon] = bearingPerpLeft(node.bearing)
+    const ls = lngScale(refLat)
+    const totalNodeW = nodeWidth(node, pxPerWeight)
+    const hw = pxToHalfDeg(totalNodeW, zoom, geoScale, refLat)
+    const rad = node.bearing * PI / 180
+    const fwdLat = cos(rad), fwdLon = sin(rad)
+    const approachLen = hw * 1.5
+
+    const childIndices = node.children.map((_, i) => i)
+    const childWidths = childIndices.map(i => nodeWidth(node.children[i], pxPerWeight))
+    const totalW = childWidths.reduce((s, w) => s + w, 0)
+
+    // Collect edges for each child
+    const childEdgesList: (BranchEdges | null)[] = []
+    let cumW = 0
+    for (let ci = 0; ci < childIndices.length; ci++) {
+      const cw = childWidths[ci]
+      const centerOffset = -totalW / 2 + cumW + cw / 2
+      cumW += cw
+      const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
+      const junctionPt: LatLon = [
+        node.pos[0] + perpLat * offsetDeg,
+        node.pos[1] + perpLon * offsetDeg * ls,
+      ]
+      const childApproach: LatLon = [
+        junctionPt[0] - fwdLat * approachLen,
+        junctionPt[1] - fwdLon * approachLen * ls,
+      ]
+      childEdgesList.push(
+        collectEdges(node.children[childIndices[ci]], childApproach, false, node.bearing, junctionPt)
+      )
+    }
+
+    // Filter to non-null children
+    const validChildren = childEdgesList.filter((e): e is BranchEdges => e !== null)
+    if (validChildren.length === 0) return trunkEdges
+
+    // Stitch: the outer contour traces:
+    // 1. First child's left edge (source → junction)
+    // 2. Trunk's left edge (junction → destination)
+    // 3. Arrow tip (if present)
+    // 4. Trunk's right edge reversed (destination → junction)
+    // 5. Last child's right edge reversed (junction → source)
+    // 6. For inner children (right to left): each child's right reversed, then left reversed
+    //    This creates the "comb" shape between child branches.
+    //
+    // For children in path direction (source→junction), left/right edges
+    // go from source to junction. The trunk edges go from junction to dest.
+
+    const outerLeft: [number, number][] = []
+    const outerRight: [number, number][] = []
+
+    // Left contour: first child's left, then trunk's left
+    outerLeft.push(...validChildren[0].left, ...trunkEdges.left)
+
+    // Right contour: last child's right, then trunk's right
+    outerRight.push(...validChildren[validChildren.length - 1].right, ...trunkEdges.right)
+
+    // Build the ring
+    const ring: [number, number][] = [...outerLeft]
+    if (trunkEdges.tip) ring.push(trunkEdges.tip)
+    ring.push(...[...outerRight].reverse())
+
+    // Stitch inner children: walk from last child back to first.
+    // For each adjacent pair, trace the inner edges but only the divergent
+    // portion — skip the coincident approach segment to avoid a zero-width seam.
+    for (let ci = validChildren.length - 1; ci >= 1; ci--) {
+      const innerLeft = validChildren[ci].left       // source → junction
+      const innerRight = validChildren[ci - 1].right // source → junction
+      // Walk backward from junction end to find where edges diverge
+      const eps = 1e-10
+      let cutoff = innerLeft.length // default: trace all
+      for (let k = innerLeft.length - 1; k >= 0; k--) {
+        const rk = innerRight.length - 1 - (innerLeft.length - 1 - k)
+        if (rk < 0 || rk >= innerRight.length) break
+        const dx = innerLeft[k][0] - innerRight[rk][0]
+        const dy = innerLeft[k][1] - innerRight[rk][1]
+        if (dx * dx + dy * dy > eps) { cutoff = k + 1; break }
+      }
+      ring.push(...innerLeft.slice(0, cutoff))
+      const rCutoff = innerRight.length - (innerLeft.length - cutoff)
+      ring.push(...[...innerRight.slice(0, Math.max(0, rCutoff))].reverse())
+    }
+
+    // Close the ring
+    ring.push(ring[0])
+    return { left: ring, right: [] }
+  }
+
+  function stitchSplit(
+    node: FlowNode & { type: 'split' },
+    trunkEdges: BranchEdges,
+    terminal: boolean,
+  ): BranchEdges | null {
+    const [perpLat, perpLon] = bearingPerpLeft(node.bearing)
+    const ls = lngScale(refLat)
+    const totalNodeW = nodeWidth(node, pxPerWeight)
+    const hw = pxToHalfDeg(totalNodeW, zoom, geoScale, refLat)
+    const rad = node.bearing * PI / 180
+    const fwdLat = cos(rad), fwdLon = sin(rad)
+    const approachLen = hw * 1.5
+
+    const childIndices = node.children.map((_, i) => i)
+    const childWidths = childIndices.map(i => nodeWidth(node.children[i], pxPerWeight))
+    const totalW = childWidths.reduce((s, w) => s + w, 0)
+
+    // Collect edges for each split child
+    const childEdgesList: (BranchEdges | null)[] = []
+    let cumW = 0
+    for (let ci = 0; ci < childIndices.length; ci++) {
+      const cw = childWidths[ci]
+      const centerOffset = -totalW / 2 + cumW + cw / 2
+      cumW += cw
+      const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
+      const junctionPt: LatLon = [
+        node.pos[0] + perpLat * offsetDeg,
+        node.pos[1] + perpLon * offsetDeg * ls,
+      ]
+      const splitChild = node.children[childIndices[ci]]
+      let childTarget = splitChild.pos
+      let childArriveBearing: number | undefined
+      if (junctionMap) {
+        const slot = junctionMap.get(posKey(splitChild.pos))
+        if (slot) {
+          childTarget = slot.offset
+          childArriveBearing = slot.bearing
+        }
+      }
+      const childDepart: LatLon = [
+        junctionPt[0] + fwdLat * approachLen,
+        junctionPt[1] + fwdLon * approachLen * ls,
+      ]
+      const childW = nodeWidth(splitChild, pxPerWeight)
+      const childHw = pxToHalfDeg(childW, zoom, geoScale, refLat)
+      const arrBearing = childArriveBearing
+        ?? (splitChild.type === 'source' && 'bearing' in splitChild && splitChild.bearing != null
+          ? splitChild.bearing : node.bearing)
+      const curvePts = directedBezier(childDepart, childTarget, node.bearing, arrBearing)
+      let splitPath: LatLon[] = [junctionPt, ...curvePts]
+      if (reverse) splitPath = [...splitPath].reverse()
+      const e = ribbonEdges(splitPath, childHw, refLat)
+      if (e.left.length > 0) {
+        childEdgesList.push(e)
+      } else {
+        childEdgesList.push(null)
+      }
+    }
+
+    const validChildren = childEdgesList.filter((e): e is BranchEdges => e !== null)
+    if (validChildren.length === 0) return trunkEdges
+
+    // For split: trunk goes to junction, then children fan out.
+    // Outer contour:
+    // 1. Trunk left (origin → split point)
+    // 2. First child's left (split → child dest)
+    // 3. First child's right reversed (child dest → split)
+    // ... inner children ...
+    // N. Last child's left (split → child dest)
+    // N+1. Last child's right reversed (child dest → split)
+    // N+2. Trunk right reversed (split → origin)
+
+    const ring: [number, number][] = []
+    // Trunk left
+    ring.push(...trunkEdges.left)
+    // First child left
+    ring.push(...validChildren[0].left)
+    // First child right reversed
+    ring.push(...[...validChildren[0].right].reverse())
+    // Inner children
+    for (let ci = 1; ci < validChildren.length; ci++) {
+      ring.push(...validChildren[ci].left)
+      ring.push(...[...validChildren[ci].right].reverse())
+    }
+    // Trunk right reversed
+    ring.push(...[...trunkEdges.right].reverse())
+    // Close
+    ring.push(ring[0])
+    return { left: ring, right: [] }
+  }
+
+  const edges = collectEdges(tree.root, tree.destPos, true)
+  if (!edges) {
+    return ringFeature<RibbonProperties>([], { color, width: 0, key, opacity: 1 })
+  }
+
+  // If the result is already a fully-stitched ring (left contains the full ring, right is empty),
+  // use it directly. Otherwise, close left + tip + right into a ring.
+  let ring: [number, number][]
+  if (edges.right.length === 0) {
+    ring = edges.left
+  } else {
+    ring = [...edges.left]
+    if (edges.tip) ring.push(edges.tip)
+    ring.push(...[...edges.right].reverse())
+    ring.push(ring[0])
+  }
+
+  const width = nodeWidth(tree.root, pxPerWeight)
+  return ringFeature<RibbonProperties>(ring, { color, width, key, opacity: 1 })
+}
+
+// --- Compilation: coordinate split→merge junction offsets ---
+
+/** Key for position matching (rounded to avoid float issues) */
+function posKey(pos: LatLon): string {
+  return `${pos[0].toFixed(6)},${pos[1].toFixed(6)}`
+}
+
+/** Info about a merge junction slot for a specific child */
+interface JunctionSlot {
+  offset: LatLon  // the offset junction point
+  bearing: number // the merge bearing (arrival direction)
+}
+
+/** Build a map of merge positions → per-child junction offsets.
+ *  For each merge, computes the perpendicular offset for each child
+ *  based on its position in the stacking order. The map is keyed by
+ *  the child's source position (so a split branch targeting that
+ *  position can look up its correct offset). */
+function buildJunctionMap(
   trees: FlowTree[],
   opts: RenderFlowTreeOpts,
+): Map<string, JunctionSlot> {
+  const { refLat, zoom, geoScale, pxPerWeight } = opts
+  const junctionMap = new Map<string, JunctionSlot>()
+
+  function walk(node: FlowNode) {
+    if (node.type !== 'merge') {
+      if (node.type === 'split') node.children.forEach(walk)
+      return
+    }
+    const [perpLat, perpLon] = bearingPerpLeft(node.bearing)
+    const ls = lngScale(refLat)
+    const totalNodeW = nodeWidth(node, pxPerWeight)
+    const hw = pxToHalfDeg(totalNodeW, zoom, geoScale, refLat)
+
+    // User-specified order (same as renderNode — no auto-sort)
+    const childIndices = node.children.map((_, i) => i)
+
+    const childWidths = childIndices.map(i => nodeWidth(node.children[i], pxPerWeight))
+    const totalW = childWidths.reduce((s, w) => s + w, 0)
+    let cumW = 0
+    for (let ci = 0; ci < childIndices.length; ci++) {
+      const cw = childWidths[ci]
+      const centerOffset = -totalW / 2 + cumW + cw / 2
+      cumW += cw
+      const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
+      const junctionPt: LatLon = [
+        node.pos[0] + perpLat * offsetDeg,
+        node.pos[1] + perpLon * offsetDeg * ls,
+      ]
+      const child = node.children[childIndices[ci]]
+      // Map child's source position → its junction offset at this merge
+      junctionMap.set(posKey(child.pos), {
+        offset: junctionPt,
+        bearing: node.bearing,
+      })
+      // Recurse into child subtrees
+      walk(child)
+    }
+  }
+
+  for (const tree of trees) walk(tree.root)
+  return junctionMap
+}
+
+/** Render multiple flow trees, returning a GeoJSON FeatureCollection.
+ *  Performs a compilation pass first to coordinate split→merge offsets.
+ *  When `singlePoly` is true, each tree is rendered as a single polygon
+ *  (no seams at junctions). */
+export function renderFlows(
+  trees: FlowTree[],
+  opts: RenderFlowTreeOpts & { singlePoly?: boolean },
 ): GeoJSON.FeatureCollection {
+  // Compilation: build junction offset map from all merges
+  const junctionMap = buildJunctionMap(trees, opts)
+
   const features: GeoJSON.Feature[] = []
   for (const tree of trees) {
-    features.push(...renderFlowTree(tree, opts))
+    if (opts.singlePoly) {
+      features.push(renderFlowTreeSinglePoly(tree, opts, junctionMap))
+    } else {
+      features.push(...renderFlowTree(tree, opts, junctionMap))
+    }
   }
   features.sort((a, b) => ((b.properties?.width as number) ?? 0) - ((a.properties?.width as number) ?? 0))
   return { type: 'FeatureCollection', features }

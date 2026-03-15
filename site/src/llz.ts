@@ -5,10 +5,10 @@ export type LLZ = { lat: number; lng: number; zoom: number }
 
 export const llzParam: Param<LLZ> = {
   encode: ({ lat, lng, zoom }) =>
-    `${lat.toFixed(4)},${lng.toFixed(4)},${zoom.toFixed(2)}`,
+    `${lat.toFixed(4)}_${lng.toFixed(4)}_${zoom.toFixed(2)}`,
   decode: (encoded) => {
     if (!encoded) return { lat: 0, lng: 0, zoom: 2 }
-    const [lat, lng, zoom] = encoded.split(',').map(Number)
+    const [lat, lng, zoom] = encoded.split('_').map(Number)
     return { lat: lat || 0, lng: lng || 0, zoom: zoom || 2 }
   },
 }

@@ -1,8 +1,9 @@
 export type LatLon = [number, number]  // [lat, lon]
 
 export type FlowNode =
-  | { type: 'source'; label: string; pos: LatLon; weight: number }
+  | { type: 'source'; label: string; pos: LatLon; weight: number; bearing?: number }
   | { type: 'merge'; pos: LatLon; bearing: number; children: FlowNode[] }
+  | { type: 'split'; pos: LatLon; bearing: number; children: FlowNode[] }
 
 export interface FlowTree {
   dest: string

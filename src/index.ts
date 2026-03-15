@@ -9,13 +9,14 @@ export {
   fwdAt,
   bearingPerpLeft,
 } from './path'
-export { ribbon, ribbonArrow, ringFeature } from './ribbon'
+export { ribbon, ribbonArrow, ribbonEdges, ribbonArrowEdges, ringFeature } from './ribbon'
 export type { RibbonArrowOpts } from './ribbon'
 export {
   nodeWeight,
   flowSources,
   nodeWidth,
   renderFlowTree,
+  renderFlowTreeSinglePoly,
   renderFlows,
 } from './flow'
 export type { RenderFlowTreeOpts } from './flow'

@@ -63,13 +63,21 @@ export function directedBezier(
 ): LatLon[] {
   const dLat = end[0] - start[0], dLon = end[1] - start[1]
   const dist = sqrt(dLat * dLat + dLon * dLon)
-  const span = max(dist * 0.4, 0.001)
+
+  // Scale control point distance based on alignment between bearing and
+  // actual start→end direction. When bearings conflict with the path
+  // direction, use shorter control arms to prevent loops.
+  const pathAngle = Math.atan2(dLon, dLat) * 180 / PI
 
   const dRad = (departBearing ?? 90) * PI / 180
-  const cp1: LatLon = [start[0] + cos(dRad) * span, start[1] + sin(dRad) * span]
+  const dDiff = Math.abs(((((departBearing ?? 90) - pathAngle) % 360) + 540) % 360 - 180)
+  const dSpan = max(dist * (dDiff < 90 ? 0.4 : 0.2), 0.001)
+  const cp1: LatLon = [start[0] + cos(dRad) * dSpan, start[1] + sin(dRad) * dSpan]
 
   const aRad = (arriveBearing ?? 90) * PI / 180
-  const cp2: LatLon = [end[0] - cos(aRad) * span, end[1] - sin(aRad) * span]
+  const aDiff = Math.abs(((((arriveBearing ?? 90) - pathAngle) % 360) + 540) % 360 - 180)
+  const aSpan = max(dist * (aDiff < 90 ? 0.4 : 0.2), 0.001)
+  const cp2: LatLon = [end[0] - cos(aRad) * aSpan, end[1] - sin(aRad) * aSpan]
 
   return cubicBezier(start, cp1, cp2, end)
 }

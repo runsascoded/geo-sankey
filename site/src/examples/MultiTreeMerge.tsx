@@ -68,7 +68,7 @@ export default function MultiTreeMerge() {
         arrowWing: 1.8,
         arrowLen: 1.2,
       }
-      const fc = renderFlows([tree], opts)
+      const fc = renderFlows([tree], { ...opts, singlePoly: true })
       allFeatures.push(...fc.features)
     }
     allFeatures.sort((a, b) => ((b.properties?.width as number) ?? 0) - ((a.properties?.width as number) ?? 0))
@@ -104,7 +104,7 @@ export default function MultiTreeMerge() {
               type="fill"
               paint={{
                 'fill-color': ['get', 'color'],
-                'fill-opacity': 0.85,
+                'fill-opacity': 0.5,
               }}
             />
             <Layer
