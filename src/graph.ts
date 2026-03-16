@@ -447,12 +447,14 @@ export function renderFlowGraphSinglePoly(
     const layout = layouts.get(nodeId)!
 
     // --- Forward: left edges of this node's prefix ---
-    // Only source trunks need a prefix. Through-node bodies are implicit
-    // in the gap between input edge endpoints and output edge startpoints.
     if (layout.isSource) {
       const tp = srcTrunkPairs.get(nodeId)
       if (tp) ring.push(...tp.left)
     }
+    // Through-nodes: NO body prefix. The edge endpoints at input/output
+    // faces may not align (different widths), but the edges tile within
+    // each face. The ring walks edge-by-edge, and the gaps at the node
+    // center are handled by the edge bezier endpoints being at slot positions.
 
     const outs = sortedOuts(nodeId)
 
