@@ -277,12 +277,13 @@ export function renderFlowGraph(
     const ls = lngScale(refLat)
     const [fLat, fLon] = fwd(n.bearing)
 
-    // Arrow from input face to node pos
-    const inFace: LatLon = [
-      n.pos[0] - fLat * layout.approachLen,
-      n.pos[1] - fLon * layout.approachLen * ls,
+    // Arrow path needs to be long enough that ribbonArrow's 40% clamp
+    // doesn't squish the arrowhead. Start far behind the node.
+    const arrowStart: LatLon = [
+      n.pos[0] - fLat * layout.halfW * 10,
+      n.pos[1] - fLon * layout.halfW * 10 * ls,
     ]
-    const arrowPath = straightLine(inFace, n.pos)
+    const arrowPath = straightLine(arrowStart, n.pos, 10)
     const widthPx = pxW(pxPerWeight, layout.throughWeight)
     // Ensure minimum wing extension beyond trunk edge
     const minWingFactor = (widthPx + minArrowWingPx * 2) / widthPx
@@ -399,12 +400,12 @@ export function renderFlowGraphSinglePoly(
     const n = layout.node
     const ls = lngScale(refLat)
     const [fLat, fLon] = fwd(n.bearing)
-    const inFace: LatLon = [n.pos[0] - fLat * layout.approachLen, n.pos[1] - fLon * layout.approachLen * ls]
+    const arrowStart: LatLon = [n.pos[0] - fLat * layout.halfW * 10, n.pos[1] - fLon * layout.halfW * 10 * ls]
     const widthPx = pxW(pxPerWeight, layout.throughWeight)
     const minWingFactor = (widthPx + minArrowWingPx * 2) / widthPx
     const effectiveWing = max(arrowWing, minWingFactor)
     arrowPairs.set(nid, arrowEdgePairForPath(
-      straightLine(inFace, n.pos),
+      straightLine(arrowStart, n.pos, 10),
       layout.halfW, refLat,
       { arrowWingFactor: effectiveWing, arrowLenFactor: arrowLen, widthPx },
     ))
@@ -421,193 +422,128 @@ export function renderFlowGraphSinglePoly(
     srcTrunkPairs.set(nid, edgePairForPath(straightLine(n.pos, outFace), layout.halfW, refLat))
   }
 
-  // --- Full perimeter walk ---
-  // Traces the outer boundary of the entire connected flow graph as ONE ring.
-  // Forward pass: follows top (left) edges from source to sink.
-  // At splits: trace each output branch forward then back.
-  // At merges (backward pass): trace side inputs backward then forward.
-
+  // --- Iterative perimeter walk ---
+  // Direct iterative perimeter walk. Appends points to the ring as we
+  // trace the outer boundary of the entire connected flow.
   const ls = lngScale(refLat)
 
-  function sortedOutputs(nodeId: string): GFlowEdge[] {
+  function sortedOuts(nodeId: string): GFlowEdge[] {
     return [...outEdgesOf.get(nodeId)!].sort((a, b) =>
       perpProjection(nodeMap.get(a.to)!.pos, layouts.get(nodeId)!.node.pos, layouts.get(nodeId)!.node.bearing, ls) -
       perpProjection(nodeMap.get(b.to)!.pos, layouts.get(nodeId)!.node.pos, layouts.get(nodeId)!.node.bearing, ls)
     )
   }
 
-  function sortedInputs(nodeId: string): GFlowEdge[] {
+  function sortedIns(nodeId: string): GFlowEdge[] {
     return [...inEdgesOf.get(nodeId)!].sort((a, b) =>
       perpProjection(nodeMap.get(a.from)!.pos, layouts.get(nodeId)!.node.pos, layouts.get(nodeId)!.node.bearing, ls) -
       perpProjection(nodeMap.get(b.from)!.pos, layouts.get(nodeId)!.node.pos, layouts.get(nodeId)!.node.bearing, ls)
     )
   }
 
-  /** Walk forward from a node's output face, tracing left edges forward
-   *  to all reachable sinks, then right edges back. Returns a complete
-   *  ring segment (may include inner comb for splits). */
-  function walkForward(nodeId: string, incomingEdgeId?: string): { left: [number, number][]; right: [number, number][]; tip?: [number, number] } | null {
+  /** Recursively trace a branch: forward along left edges to sink,
+   *  then backward along right edges. Appends directly to `ring`. */
+  function traceBranch(nodeId: string, arrivedViaEdge: string | null, ring: [number, number][]) {
     const layout = layouts.get(nodeId)!
-    const outs = sortedOutputs(nodeId)
-    const ins = sortedInputs(nodeId)
 
-    // Prefix: source trunk or body (if this node has a body)
-    let prefixLeft: [number, number][] = []
-    let prefixRight: [number, number][] = []
+    // --- Forward: left edges of this node's prefix ---
+    // Only source trunks need a prefix. Through-node bodies are implicit
+    // in the gap between input edge endpoints and output edge startpoints.
     if (layout.isSource) {
       const tp = srcTrunkPairs.get(nodeId)
-      if (tp) { prefixLeft = tp.left; prefixRight = tp.right }
-    } else if (layout.inWeight > 0 && layout.outWeight > 0) {
-      const bp = bodyPairs.get(nodeId)
-      if (bp) { prefixLeft = bp.left; prefixRight = bp.right }
+      if (tp) ring.push(...tp.left)
     }
 
-    // Sink: arrowhead
+    const outs = sortedOuts(nodeId)
+
+    // --- Sink: arrowhead from input face to node pos ---
     if (layout.isSink) {
-      const ap = arrowPairs.get(nodeId)
-      if (!ap) return null
-      return { left: [...prefixLeft, ...ap.left], right: [...prefixRight, ...ap.right], tip: ap.tip }
-    }
-
-    if (outs.length === 0) return null
-
-    // Walk each output branch forward
-    const branches: { left: [number, number][]; right: [number, number][]; tip?: [number, number] }[] = []
-    for (const outEdge of outs) {
-      const ep = edgePairs.get(eid(outEdge))!
-      const destResult = walkForward(outEdge.to, eid(outEdge))
-      branches.push({
-        left: [...ep.left, ...(destResult?.left ?? [])],
-        right: [...ep.right, ...(destResult?.right ?? [])],
-        tip: destResult?.tip,
-      })
-    }
-
-    if (branches.length === 1) {
-      const b = branches[0]
-      const mergeReturn = buildMergeReturn(nodeId, incomingEdgeId)
-
-      if (mergeReturn.length === 0) {
-        // No side inputs: simple left/right pair
-        return {
-          left: [...prefixLeft, ...b.left],
-          right: [...prefixRight, ...b.right],
-          tip: b.tip,
-        }
-      }
-
-      // Has merge side-inputs: build complete ring directly.
-      // Forward pass: prefixLeft → branch left → tip
-      // Backward pass: branch right reversed → mergeReturn → prefixRight reversed
-      const ring: [number, number][] = [
-        ...prefixLeft,
-        ...b.left,
+      const n = layout.node
+      const nodeLs = lngScale(refLat)
+      const [fLat, fLon] = fwd(n.bearing)
+      const inFace: LatLon = [
+        n.pos[0] - fLat * layout.approachLen,
+        n.pos[1] - fLon * layout.approachLen * nodeLs,
       ]
-      if (b.tip) ring.push(b.tip)
-      ring.push(...[...b.right].reverse())
-      ring.push(...mergeReturn)
-      ring.push(...[...prefixRight].reverse())
-      ring.push(ring[0])
-      return { left: ring, right: [] }
+      const widthPx = pxW(pxPerWeight, layout.throughWeight)
+      const minWingFactor = (widthPx + minArrowWingPx * 2) / widthPx
+      const effectiveWing = max(arrowWing, minWingFactor)
+      const ap = arrowEdgePairForPath(
+        straightLine(inFace, n.pos, 10),
+        layout.halfW, refLat,
+        { arrowWingFactor: effectiveWing, arrowLenFactor: arrowLen, widthPx },
+      )
+      ring.push(...ap.left)
+      if (ap.tip) ring.push(ap.tip)
+      ring.push(...[...ap.right].reverse())
+      return
     }
 
-    // Multiple outputs: build ring with comb
-    const first = branches[0]
-    const last = branches[branches.length - 1]
+    // --- Forward: trace each output branch ---
+    for (let i = 0; i < outs.length; i++) {
+      const outEdge = outs[i]
+      const ep = edgePairs.get(eid(outEdge))!
 
-    const ring: [number, number][] = [
-      ...prefixLeft,
-      ...first.left,
-    ]
-    if (first.tip) ring.push(first.tip)
-    ring.push(...[...first.right].reverse())
+      // Forward along this edge's left
+      ring.push(...ep.left)
 
-    for (let i = 1; i < branches.length; i++) {
-      const bi = branches[i]
-      ring.push(...bi.left)
-      if (bi.tip) ring.push(bi.tip)
-      ring.push(...[...bi.right].reverse())
+      // Recurse into destination
+      traceBranch(outEdge.to, eid(outEdge), ring)
+
+      // Backward along this edge's right
+      ring.push(...[...ep.right].reverse())
     }
 
-    // Merge side-inputs
-    const mergeRight = buildMergeReturn(nodeId, incomingEdgeId)
-    ring.push(...mergeRight)
-    ring.push(...[...prefixRight].reverse())
-    ring.push(ring[0])
+    // --- Backward: merge side-inputs ---
+    // After tracing all outputs and coming back, trace side inputs
+    // (inputs other than the one we arrived from).
+    const ins = sortedIns(nodeId)
+    if (ins.length > 1 && arrivedViaEdge) {
+      // Walk side inputs from bottom to top (reversed order)
+      for (let i = ins.length - 1; i >= 0; i--) {
+        const inEdge = ins[i]
+        if (eid(inEdge) === arrivedViaEdge) continue
 
-    return { left: ring, right: [] }
-  }
+        const ep = edgePairs.get(eid(inEdge))!
 
-  /** When walking backward through a merge node, trace side inputs
-   *  (inputs other than the one we arrived from). Each side input is
-   *  traced backward to its source then forward again. */
-  function buildMergeReturn(nodeId: string, arrivedViaEdge?: string): [number, number][] {
-    const ins = sortedInputs(nodeId)
-    if (ins.length <= 1) return []
+        // Backward along this input's right edge (merge→source)
+        ring.push(...[...ep.right].reverse())
 
-    const pts: [number, number][] = []
-    // Walk side inputs from bottom to top (reversed order), skipping the main input
-    for (let i = ins.length - 1; i >= 0; i--) {
-      const inEdge = ins[i]
-      const id = eid(inEdge)
-      if (id === arrivedViaEdge) continue
-
-      const ep = edgePairs.get(id)!
-      const srcLayout = layouts.get(inEdge.from)!
-
-      // Trace backward along this input: right edge reversed (merge→source direction)
-      pts.push(...[...ep.right].reverse())
-
-      // At the source: trace around it
-      if (srcLayout.isSource) {
-        const tp = srcTrunkPairs.get(inEdge.from)
-        if (tp) {
-          pts.push(...[...tp.right].reverse())
-          pts.push(...tp.left)
+        // Trace around the source node
+        const srcLayout = layouts.get(inEdge.from)!
+        if (srcLayout.isSource) {
+          const tp = srcTrunkPairs.get(inEdge.from)
+          if (tp) {
+            ring.push(...[...tp.right].reverse())
+            ring.push(...tp.left)
+          }
         }
-      }
-      // TODO: handle non-source input nodes (through-nodes feeding into this merge)
+        // TODO: handle non-source input nodes
 
-      // Trace forward along this input: left edge (source→merge direction)
-      pts.push(...ep.left)
+        // Forward along this input's left edge (source→merge)
+        ring.push(...ep.left)
+      }
     }
 
-    return pts
+    if (layout.isSource) {
+      const tp = srcTrunkPairs.get(nodeId)
+      if (tp) ring.push(...[...tp.right].reverse())
+    }
   }
 
-  // Find THE starting source (pick the one with highest throughput, or first)
-  // Walk from it to produce one ring for the entire connected component.
+  // Find the main source (the one that feeds into the first/top input of its destination)
   const features: GeoJSON.Feature[] = []
-  const visited = new Set<string>()
-
   for (const [nid, layout] of layouts) {
     if (!layout.isSource) continue
-    if (visited.has(nid)) continue
-
-    // Check if this source's output edges connect to a merge that's reachable
-    // from another source (which would make this a side input, not the main entry).
-    // For now, start from sources whose first output goes to a node where
-    // this source provides the FIRST (topmost) input.
-    const outs = sortedOutputs(nid)
+    const outs = sortedOuts(nid)
     if (outs.length === 0) continue
-    const firstDest = outs[0].to
-    const destIns = sortedInputs(firstDest)
-    const isMainInput = destIns.length === 0 || eid(destIns[0]) === eid(outs[0])
+    const destIns = sortedIns(outs[0].to)
+    if (destIns.length > 0 && eid(destIns[0]) !== eid(outs[0])) continue
 
-    if (!isMainInput) continue // skip — this source will be traced as a merge side-input
-
-    visited.add(nid)
-    const result = walkForward(nid)
-    if (result && result.left.length > 0) {
-      let ring: [number, number][]
-      if (result.right.length === 0) {
-        ring = result.left
-      } else {
-        ring = [...result.left]
-        if (result.tip) ring.push(result.tip)
-        ring.push(...[...result.right].reverse())
-        ring.push(ring[0])
-      }
+    const ring: [number, number][] = []
+    traceBranch(nid, null, ring)
+    if (ring.length > 0) {
+      ring.push(ring[0])
       const w = pxW(pxPerWeight, layout.throughWeight)
       features.push(ringFeature(ring, { color, width: w, key: `sp-${nid}`, opacity: 1 }))
     }
