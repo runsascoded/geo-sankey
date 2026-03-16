@@ -93,12 +93,12 @@ const simpleSplit: FlowGraph = {
 
 const ferryGraph: FlowGraph = {
   nodes: [
-    { id: 'origin', pos: [40.735, -74.045], bearing: 90 },
-    { id: 'split', pos: [40.735, -74.040], bearing: 90 },
+    { id: 'origin', pos: [40.735, -74.055], bearing: 90 },
+    { id: 'split', pos: [40.735, -74.045], bearing: 90 },
     { id: 'merge', pos: [40.735, -74.020], bearing: 90 },
-    { id: 'dest', pos: [40.735, -74.005], bearing: 90 },
-    { id: 'north', pos: [40.745, -74.035], bearing: 150 },
-    { id: 'south', pos: [40.725, -74.030], bearing: 30 },
+    { id: 'dest', pos: [40.735, -74.000], bearing: 90 },
+    { id: 'north', pos: [40.748, -74.038], bearing: 150 },
+    { id: 'south', pos: [40.720, -74.038], bearing: 30 },
   ],
   edges: [
     { from: 'origin', to: 'split', weight: 35 },

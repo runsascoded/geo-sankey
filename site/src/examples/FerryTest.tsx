@@ -9,12 +9,12 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 
 const graph: FlowGraph = {
   nodes: [
-    { id: 'origin',  pos: [40.735, -74.045], bearing: 90, label: 'Origin' },
-    { id: 'split',   pos: [40.735, -74.040], bearing: 90 },
+    { id: 'origin',  pos: [40.735, -74.055], bearing: 90, label: 'Origin' },
+    { id: 'split',   pos: [40.735, -74.045], bearing: 90 },
     { id: 'merge',   pos: [40.735, -74.020], bearing: 90 },
-    { id: 'dest',    pos: [40.735, -74.005], bearing: 90, label: 'Destination' },
-    { id: 'north',   pos: [40.745, -74.035], bearing: 150, label: 'North' },
-    { id: 'south',   pos: [40.725, -74.030], bearing: 30, label: 'South' },
+    { id: 'dest',    pos: [40.735, -74.000], bearing: 90, label: 'Destination' },
+    { id: 'north',   pos: [40.748, -74.038], bearing: 150, label: 'North' },
+    { id: 'south',   pos: [40.720, -74.038], bearing: 30, label: 'South' },
   ],
   edges: [
     { from: 'origin', to: 'split', weight: 35 },
@@ -34,7 +34,7 @@ const numParam = (def: number): Param<number> => ({
   decode: (s) => s ? parseFloat(s) || def : def,
 })
 
-const DEFAULTS = { lat: 40.735, lng: -74.025, zoom: 14 }
+const DEFAULTS = { lat: 40.735, lng: -74.030, zoom: 13 }
 
 export default function FerryTest() {
   const [llz, setLLZ] = useLLZ(DEFAULTS)
