@@ -6,12 +6,14 @@ import MultiTreeMerge from './examples/MultiTreeMerge'
 import ParallelRibbons from './examples/ParallelRibbons'
 import SeamTest from './examples/SeamTest'
 import FerryTest from './examples/FerryTest'
+import HBTFerry from './examples/HBTFerry'
 
 const examples = [
   { id: 'multi-tree', label: 'Flow Tree Merge', key: '1', component: MultiTreeMerge },
   { id: 'parallel', label: 'Parallel Ribbons', key: '2', component: ParallelRibbons },
   { id: 'seam-test', label: 'Seam Test', key: '3', component: SeamTest },
-  { id: 'ferry', label: 'Hudson Ferry', key: '4', component: FerryTest },
+  { id: 'ferry', label: 'Simple Flow', key: '4', component: FerryTest },
+  { id: 'hbt', label: 'HBT Ferry', key: '5', component: HBTFerry },
 ] as const
 
 const exParam: Param<string> = {
