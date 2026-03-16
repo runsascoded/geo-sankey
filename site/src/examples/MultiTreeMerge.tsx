@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState } from 'react'
 import Map, { Source, Layer } from 'react-map-gl/maplibre'
 import { renderFlows } from 'geo-sankey'
 import type { FlowTree, RenderFlowTreeOpts } from 'geo-sankey'
@@ -16,8 +16,8 @@ const trees: (FlowTree & { color: string })[] = [
       pos: [40.758, -74.008],
       bearing: 110,
       children: [
-        { type: 'source', label: 'Lincoln Tunnel', pos: [40.764, -74.022], weight: 80 },
-        { type: 'source', label: 'Weehawken Ferry', pos: [40.769, -74.015], weight: 20 },
+        { type: 'source', label: 'GWB Express', pos: [40.752, -74.020], weight: 20 },
+        { type: 'source', label: 'Lincoln Tunnel', pos: [40.766, -74.020], weight: 80 },
       ],
     },
   },
@@ -54,6 +54,8 @@ const REF_LAT = 40.740
 
 export default function MultiTreeMerge() {
   const [llz, setLLZ] = useLLZ(DEFAULTS)
+  const [plugFrac, setPlugFrac] = useState(0.3)
+  const [plugBearing, setPlugBearing] = useState(1)
 
   const geojson = useMemo(() => {
     const allFeatures: GeoJSON.Feature[] = []
@@ -68,12 +70,12 @@ export default function MultiTreeMerge() {
         arrowWing: 1.8,
         arrowLen: 1.2,
       }
-      const fc = renderFlows([tree], { ...opts, singlePoly: true })
+      const fc = renderFlows([tree], { ...opts, singlePoly: true, plugFraction: plugFrac, plugBearingDeg: plugBearing })
       allFeatures.push(...fc.features)
     }
     allFeatures.sort((a, b) => ((b.properties?.width as number) ?? 0) - ((a.properties?.width as number) ?? 0))
     return { type: 'FeatureCollection' as const, features: allFeatures }
-  }, [llz.zoom])
+  }, [llz.zoom, plugFrac, plugBearing])
 
   const onMove = useCallback((e: { viewState: { longitude: number; latitude: number; zoom: number } }) => {
     setLLZ({ lat: e.viewState.latitude, lng: e.viewState.longitude, zoom: e.viewState.zoom })
@@ -90,6 +92,28 @@ export default function MultiTreeMerge() {
             {t.dest}
           </span>
         ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, margin: '4px 0 8px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 12, color: '#555' }}>Plug dist:</label>
+          <input
+            type="range" min="0" max="100" step="1"
+            value={Math.round(Math.sqrt(plugFrac) * 100)}
+            onChange={e => { const v = parseInt(e.target.value) / 100; setPlugFrac(v * v) }}
+            style={{ width: 160 }}
+          />
+          <span style={{ fontSize: 12, color: '#555', minWidth: 32 }}>{plugFrac.toFixed(3)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <label style={{ fontSize: 12, color: '#555' }}>Plug bearing:</label>
+          <input
+            type="range" min="0" max="30" step="0.5"
+            value={plugBearing}
+            onChange={e => setPlugBearing(parseFloat(e.target.value))}
+            style={{ width: 160 }}
+          />
+          <span style={{ fontSize: 12, color: '#555', minWidth: 24 }}>{plugBearing.toFixed(1)}°</span>
+        </div>
       </div>
       <div className="map-container">
         <Map

@@ -5,7 +5,7 @@ import ParallelRibbons from './examples/ParallelRibbons'
 import SeamTest from './examples/SeamTest'
 
 const examples = [
-  { id: 'multi', label: 'Flow Tree Merge', component: MultiTreeMerge },
+  { id: 'multi-tree', label: 'Flow Tree Merge', component: MultiTreeMerge },
   { id: 'parallel', label: 'Parallel Ribbons', component: ParallelRibbons },
   { id: 'seam-test', label: 'Seam Test', component: SeamTest },
 ] as const

@@ -44,6 +44,14 @@ export interface RenderFlowTreeOpts {
   arrowLen: number
   /** If true, reverse path direction (for "leaving" flows) */
   reverse?: boolean
+  /** Fraction of trunk half-width used as distance convergence threshold for
+   *  plugging inner comb crevices in single-poly mode. Lower = longer crevices,
+   *  higher = earlier plug. Default 0.3. Set to 0 to disable distance-based plugging. */
+  plugFraction?: number
+  /** Bearing convergence threshold in degrees for plugging inner comb crevices.
+   *  When adjacent inner edge directions are within this angle of parallel,
+   *  the crevice is plugged. Default 1. Set to 0 to disable bearing-based plugging. */
+  plugBearingDeg?: number
 }
 
 /** Compute pixel width for a node. For merge nodes, width is the exact sum
@@ -68,7 +76,7 @@ export function renderFlowTree(
     targetPos: LatLon,
     terminal: boolean,
     arriveBearing?: number,
-    straightEnd?: LatLon,
+    approachPts?: LatLon[],
   ) {
     const width = nodeWidth(node, pxPerWeight)
     const hw = pxToHalfDeg(width, zoom, geoScale, refLat)
@@ -109,15 +117,18 @@ export function renderFlowTree(
       let curvePts: LatLon[]
       if (arriveBearing != null) {
         curvePts = directedBezier(curveStart, targetPos, departBearing, arriveBearing)
+      } else if (terminal && isMergeOrSplit) {
+        // Terminal trunk from merge/split: depart at node.bearing, curve to dest
+        curvePts = directedBezier(curveStart, targetPos, departBearing)
       } else if (terminal) {
-        // Terminal trunk: straight from node pos to dest (no departure offset)
+        // Terminal source: straight from node pos to dest
         curvePts = straightLine(node.pos, targetPos)
       } else {
         curvePts = straightLine(curveStart, targetPos)
       }
       path = terminal && arriveBearing == null
         ? [...curvePts]
-        : [...straightStart, ...curvePts, ...(straightEnd ? [straightEnd] : [])]
+        : [...straightStart, ...curvePts, ...(approachPts ?? [])]
       if (reverse) path = [...path].reverse()
     }
 
@@ -163,7 +174,8 @@ export function renderFlowTree(
             junctionPt[0] - fwdLat * approachLen,
             junctionPt[1] - fwdLon * approachLen * ls,
           ]
-          renderNode(node.children[childIndices[ci]], childApproach, false, node.bearing, junctionPt)
+          const approach = straightLine(childApproach, junctionPt, 5).slice(1) // 5 intermediate pts, skip first (= targetPos)
+          renderNode(node.children[childIndices[ci]], childApproach, false, node.bearing, approach)
         } else {
           // Split: straight departure from offset junction point along bearing,
           // then bezier curves to child position. If the child's position
@@ -234,7 +246,7 @@ export function renderFlowTreeSinglePoly(
     targetPos: LatLon,
     terminal: boolean,
     arriveBearing?: number,
-    straightEnd?: LatLon,
+    approachPts?: LatLon[],
   ): BranchEdges | null {
     const width = nodeWidth(node, pxPerWeight)
     const hw = pxToHalfDeg(width, zoom, geoScale, refLat)
@@ -271,14 +283,16 @@ export function renderFlowTreeSinglePoly(
       let curvePts: LatLon[]
       if (arriveBearing != null) {
         curvePts = directedBezier(curveStart, targetPos, departBearing, arriveBearing)
+      } else if (terminal && isMergeOrSplit) {
+        curvePts = directedBezier(curveStart, targetPos, departBearing)
       } else if (terminal) {
         curvePts = straightLine(node.pos, targetPos)
       } else {
         curvePts = straightLine(curveStart, targetPos)
       }
-      path = terminal && arriveBearing == null
+      path = terminal && arriveBearing == null && !isMergeOrSplit
         ? [...curvePts]
-        : [...straightStart, ...curvePts, ...(straightEnd ? [straightEnd] : [])]
+        : [...straightStart, ...curvePts, ...(approachPts ?? [])]
       if (reverse) path = [...path].reverse()
     }
 
@@ -349,8 +363,9 @@ export function renderFlowTreeSinglePoly(
         junctionPt[0] - fwdLat * approachLen,
         junctionPt[1] - fwdLon * approachLen * ls,
       ]
+      const approach = straightLine(childApproach, junctionPt, 5).slice(1)
       childEdgesList.push(
-        collectEdges(node.children[childIndices[ci]], childApproach, false, node.bearing, junctionPt)
+        collectEdges(node.children[childIndices[ci]], childApproach, false, node.bearing, approach)
       )
     }
 
@@ -384,25 +399,66 @@ export function renderFlowTreeSinglePoly(
     if (trunkEdges.tip) ring.push(trunkEdges.tip)
     ring.push(...[...outerRight].reverse())
 
-    // Stitch inner children: walk from last child back to first.
-    // For each adjacent pair, trace the inner edges but only the divergent
-    // portion — skip the coincident approach segment to avoid a zero-width seam.
+    // Inner comb: trace the gaps between adjacent children's branches.
+    // Where inner edges converge (the straight approach segment), use a
+    // single shared vertex instead of tracing both coincident edges.
     for (let ci = validChildren.length - 1; ci >= 1; ci--) {
-      const innerLeft = validChildren[ci].left       // source → junction
-      const innerRight = validChildren[ci - 1].right // source → junction
-      // Walk backward from junction end to find where edges diverge
-      const eps = 1e-10
-      let cutoff = innerLeft.length // default: trace all
-      for (let k = innerLeft.length - 1; k >= 0; k--) {
-        const rk = innerRight.length - 1 - (innerLeft.length - 1 - k)
-        if (rk < 0 || rk >= innerRight.length) break
-        const dx = innerLeft[k][0] - innerRight[rk][0]
-        const dy = innerLeft[k][1] - innerRight[rk][1]
-        if (dx * dx + dy * dy > eps) { cutoff = k + 1; break }
+      const innerL = validChildren[ci].left       // source → junction
+      const innerR = validChildren[ci - 1].right  // source → junction
+
+      // Find where edges converge walking backward from junction.
+      // Two modes (both can be active; first to trigger wins):
+      // 1. Distance-based: edges within plugFraction * trunkHalfWidth
+      // 2. Bearing-based: edge directions within plugBearingDeg of parallel
+      const plugFrac = opts.plugFraction ?? 0.3
+      const plugBearing = opts.plugBearingDeg ?? 1
+      const distEps = plugFrac > 0 ? (hw * plugFrac) ** 2 : 0
+      const bearingCos = plugBearing > 0 ? Math.cos(plugBearing * PI / 180) : 1
+
+      let convergePtL = innerL.length
+      let convergePtR = innerR.length
+      for (let k = 0; k < Math.min(innerL.length, innerR.length); k++) {
+        const li = innerL.length - 1 - k
+        const ri = innerR.length - 1 - k
+
+        let converged = false
+
+        // Distance check
+        if (plugFrac > 0) {
+          const dx = innerL[li][0] - innerR[ri][0]
+          const dy = innerL[li][1] - innerR[ri][1]
+          if (dx * dx + dy * dy <= distEps) converged = true
+        }
+
+        // Bearing check: compare edge directions at this point
+        if (!converged && plugBearing > 0 && li > 0 && ri > 0) {
+          const ldx = innerL[li][0] - innerL[li - 1][0]
+          const ldy = innerL[li][1] - innerL[li - 1][1]
+          const rdx = innerR[ri][0] - innerR[ri - 1][0]
+          const rdy = innerR[ri][1] - innerR[ri - 1][1]
+          const lLen = Math.sqrt(ldx * ldx + ldy * ldy)
+          const rLen = Math.sqrt(rdx * rdx + rdy * rdy)
+          if (lLen > 0 && rLen > 0) {
+            const dot = (ldx * rdx + ldy * rdy) / (lLen * rLen)
+            if (dot >= bearingCos) converged = true
+          }
+        }
+
+        if (!converged) {
+          convergePtL = li + 1
+          convergePtR = ri + 1
+          break
+        }
       }
-      ring.push(...innerLeft.slice(0, cutoff))
-      const rCutoff = innerRight.length - (innerLeft.length - cutoff)
-      ring.push(...[...innerRight.slice(0, Math.max(0, rCutoff))].reverse())
+      // Trace divergent portion of inner left, shared midpoint, divergent portion of inner right
+      ring.push(...innerL.slice(0, convergePtL))
+      if (convergePtL < innerL.length) {
+        // Add single shared midpoint at the convergence boundary
+        const ml = innerL[convergePtL]
+        const mr = innerR[Math.min(convergePtR, innerR.length - 1)]
+        ring.push([(ml[0] + mr[0]) / 2, (ml[1] + mr[1]) / 2])
+      }
+      ring.push(...[...innerR.slice(0, Math.min(convergePtR, innerR.length))].reverse())
     }
 
     // Close the ring
