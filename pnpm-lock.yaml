@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      use-kbd:
+        specifier: ^0.12.0
+        version: 0.12.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
     devDependencies:
       '@types/geojson':
         specifier: ^7946.0.16
@@ -41,6 +45,9 @@ importers:
       react-map-gl:
         specifier: ^7.1.0
         version: 7.1.9(mapbox-gl@3.20.0)(maplibre-gl@4.7.1)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
+      use-kbd:
+        specifier: ^0.12.0
+        version: 0.12.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
       use-prms:
         specifier: ^0.4.1
         version: 0.4.1(react@19.2.4)
@@ -1242,6 +1249,12 @@ packages:
     hasBin: true
     peerDependencies:
       browserslist: '>= 4.21.0'
+
+  use-kbd@0.12.0:
+    resolution: {integrity: sha512-mt5BchpLyYi1tm0brENlZYYk6ta92JIZlVmLzGBrdjHpjKR2aEzst7b1BbWJcVn/nzXfJxf8DOwibt0YsGOOeg==}
+    peerDependencies:
+      react: '>=18.0.0'
+      react-dom: '>=18.0.0'
 
   use-prms@0.4.1:
     resolution: {integrity: sha512-137eYoyglpP3bnQqU+BDnr4kJnPqkibcSBpjHAIZJugtRjtInRCi+Af+hsk5lElXcIqz+ReEA4me6YrOehg6XA==}
@@ -2498,6 +2511,14 @@ snapshots:
       browserslist: 4.28.1
       escalade: 3.2.0
       picocolors: 1.1.1
+
+  use-kbd@0.12.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4):
+    dependencies:
+      debug: 4.4.3
+      react: 19.2.4
+      react-dom: 19.2.4(react@19.2.4)
+    transitivePeerDependencies:
+      - supports-color
 
   use-prms@0.4.1(react@19.2.4):
     optionalDependencies:

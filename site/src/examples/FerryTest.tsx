@@ -7,21 +7,39 @@ import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import { useLLZ } from '../llz'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
+// Full HBT ferry layout: Hoboken South splits to uptown (MT39) and downtown (BPT)
 const graph: FlowGraph = {
   nodes: [
-    { id: 'origin',  pos: [40.735, -74.055], bearing: 90, label: 'Origin' },
-    { id: 'split',   pos: [40.735, -74.045], bearing: 90 },
-    { id: 'merge',   pos: [40.735, -74.020], bearing: 90 },
-    { id: 'dest',    pos: [40.735, -74.000], bearing: 90, label: 'Destination' },
-    { id: 'north',   pos: [40.748, -74.038], bearing: 150, label: 'North' },
-    { id: 'south',   pos: [40.720, -74.038], bearing: 30, label: 'South' },
+    // Origins / sources
+    { id: 'hob-so',  pos: [40.7359, -74.0275], bearing: 90, label: 'Hob So' },
+    { id: 'hob-14',  pos: [40.7505, -74.0241], bearing: 90, label: 'Hob 14th' },
+    { id: 'whk',     pos: [40.7771, -74.0136], bearing: 130, label: 'Weehawken' },
+    { id: 'ph',      pos: [40.7138, -74.0337], bearing: 60, label: 'Port Hamilton' },
+    // Junctions
+    { id: 'hob-split', pos: [40.7359, -74.0230], bearing: 90 },
+    { id: 'ut-merge',  pos: [40.7530, -74.0160], bearing: 30 },
+    { id: 'dt-merge',  pos: [40.7142, -74.0210], bearing: 90 },
+    { id: 'mt-merge',  pos: [40.7565, -74.0120], bearing: 110 },
+    // Destinations / sinks
+    { id: 'mt39', pos: [40.7555, -74.0060], bearing: 110, label: 'MT 39th St' },
+    { id: 'bpt',  pos: [40.7142, -74.0169], bearing: 90, label: 'Brookfield' },
   ],
   edges: [
-    { from: 'origin', to: 'split', weight: 35 },
-    { from: 'split', to: 'merge', weight: 20 },
-    { from: 'split', to: 'south', weight: 15 },
-    { from: 'north', to: 'merge', weight: 30 },
-    { from: 'merge', to: 'dest', weight: 50 },
+    // Hob So trunk → split
+    { from: 'hob-so', to: 'hob-split', weight: 30 },
+    // Split branches
+    { from: 'hob-split', to: 'ut-merge', weight: 15 },
+    { from: 'hob-split', to: 'dt-merge', weight: 15 },
+    // Uptown: Hob 14 + split-N → UT merge → outer merge
+    { from: 'hob-14', to: 'ut-merge', weight: 20 },
+    { from: 'ut-merge', to: 'mt-merge', weight: 35 },
+    // WHK → outer merge
+    { from: 'whk', to: 'mt-merge', weight: 30 },
+    // Outer merge → MT39
+    { from: 'mt-merge', to: 'mt39', weight: 65 },
+    // Downtown: PH + split-S → DT merge → BPT
+    { from: 'ph', to: 'dt-merge', weight: 20 },
+    { from: 'dt-merge', to: 'bpt', weight: 35 },
   ],
 }
 
@@ -34,7 +52,7 @@ const numParam = (def: number): Param<number> => ({
   decode: (s) => s ? parseFloat(s) || def : def,
 })
 
-const DEFAULTS = { lat: 40.735, lng: -74.030, zoom: 13 }
+const DEFAULTS = { lat: 40.740, lng: -74.020, zoom: 13 }
 
 export default function FerryTest() {
   const [llz, setLLZ] = useLLZ(DEFAULTS)
@@ -45,10 +63,10 @@ export default function FerryTest() {
   const [arrowLen, setArrowLen] = useUrlState('al', numParam(2.0))
 
   const graphOpts: FlowGraphOpts = {
-    refLat: 40.735,
+    refLat: 40.740,
     zoom: llz.zoom,
-    color: '#2563eb',
-    pxPerWeight: 0.3,
+    color: '#14B8A6', // teal (HBT ferry color)
+    pxPerWeight: 0.15,
     arrowWing,
     arrowLen,
   }
@@ -59,7 +77,6 @@ export default function FerryTest() {
       : renderFlowGraph(graph, graphOpts),
   [llz.zoom, singlePoly, arrowWing, arrowLen])
 
-  // Node markers
   const nodePoints = useMemo(() => ({
     type: 'FeatureCollection' as const,
     features: graph.nodes.map(n => ({
@@ -69,7 +86,6 @@ export default function FerryTest() {
     })),
   }), [])
 
-  // Ring vertices (polygon outline points)
   const ringPoints = useMemo(() => {
     if (!showRing || !geojson.features.length) return null
     const pts: GeoJSON.Feature[] = []
@@ -92,8 +108,8 @@ export default function FerryTest() {
 
   return (
     <div className="example">
-      <h2>Flow Graph Test</h2>
-      <p>Graph-based flow rendering: edges as bezier ribbons, nodes as merge/split junctions.</p>
+      <h2>Hudson Ferry Flows</h2>
+      <p>NY Waterway ferry routes: Hoboken South splits to uptown (MT 39th) and downtown (Brookfield).</p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, margin: '4px 0 8px', alignItems: 'center' }}>
         <label style={{ fontSize: 12 }}>
           <input type="checkbox" checked={singlePoly} onChange={e => setSinglePoly(e.target.checked)} />

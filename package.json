@@ -19,5 +19,8 @@
     "vite": "^6.0.0",
     "vite-plugin-dts": "^4.3.0",
     "vitest": "^4.1.0"
+  },
+  "dependencies": {
+    "use-kbd": "^0.12.0"
   }
 }

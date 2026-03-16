@@ -13,6 +13,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-map-gl": "^7.1.0",
+    "use-kbd": "^0.12.0",
     "use-prms": "^0.4.1"
   },
   "devDependencies": {
