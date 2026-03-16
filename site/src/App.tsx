@@ -1,6 +1,7 @@
+import { useCallback, useEffect, useState } from 'react'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
-import { HotkeysProvider, useHotkeys, KbdOmnibar } from 'use-kbd'
+import { HotkeysProvider, useHotkeys } from 'use-kbd'
 import MultiTreeMerge from './examples/MultiTreeMerge'
 import ParallelRibbons from './examples/ParallelRibbons'
 import SeamTest from './examples/SeamTest'
@@ -18,12 +19,33 @@ const exParam: Param<string> = {
   decode: (s) => s && examples.some(e => e.id === s) ? s : examples[0].id,
 }
 
+function useTheme() {
+  const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
+    const stored = localStorage.getItem('geo-sankey-theme')
+    if (stored === 'dark') return 'dark'
+    if (stored === 'light') return 'light'
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  })
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('geo-sankey-theme', theme)
+  }, [theme])
+
+  const toggle = useCallback(() => {
+    setThemeState(t => t === 'light' ? 'dark' : 'light')
+  }, [])
+
+  return { theme, toggle }
+}
+
 function AppInner() {
   const [active, setActive] = useUrlState('ex', exParam)
   const Example = examples.find(e => e.id === active)!.component
+  const { theme, toggle: toggleTheme } = useTheme()
 
-  const keymap: Record<string, string> = {}
-  const handlers: Record<string, () => void> = {}
+  const keymap: Record<string, string> = { toggleTheme: 'd' }
+  const handlers: Record<string, () => void> = { toggleTheme }
   for (const e of examples) {
     keymap[e.id] = e.key
     handlers[e.id] = () => setActive(e.id)
@@ -46,6 +68,9 @@ function AppInner() {
             </button>
           ))}
         </nav>
+        <button className="theme-toggle" onClick={toggleTheme} title="Shortcut: d">
+          {theme === 'light' ? '🌙' : '☀️'}
+        </button>
       </header>
       <main>
         <Example />
