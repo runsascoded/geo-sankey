@@ -285,7 +285,7 @@ export function renderFlowGraph(
     const ePx = pxW(pxPerWeight, edge.weight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
 
-    const path = edgePath(srcSlot, dstSlot)
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
     const ring = ribbon(path, halfW, refLat)
     if (ring.length) {
       features.push(ringFeature(ring, { color, width: ePx, key: id, opacity: 1 }))
@@ -423,36 +423,11 @@ export function renderFlowGraphSinglePoly(
     const dstSlot = dstLayout.inSlots.get(id)!
     const ePx = pxW(pxPerWeight, edge.weight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
-    const path = edgePath(srcSlot, dstSlot)
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
     edgePairs.set(id, edgePairForPath(path, halfW, refLat))
   }
 
-  // Force-align edge ribbon endpoints to exact node boundary positions.
-  // This overrides perpAt-computed positions with geometrically correct ones.
-  for (const edge of graph.edges) {
-    const id = eid(edge)
-    const ep = edgePairs.get(id)!
-    const srcSlot = layouts.get(edge.from)!.outSlots.get(id)!
-    const dstSlot = layouts.get(edge.to)!.inSlots.get(id)!
-    const ePx = pxW(pxPerWeight, edge.weight)
-    const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
-    const nodeLs = lngScale(refLat)
-
-    // Src endpoint: compute exact LEFT/RIGHT using ribbon's perpAt convention.
-    // ribbon() uses perpAt which returns [-dlon/len, dlat/len] — opposite of perpL.
-    // LEFT = pos + perpAt*halfW, RIGHT = pos - perpAt*halfW.
-    // For bearing B, perpAt for a straight path at B gives [-sin(B), cos(B)]
-    // (the NEGATIVE of perpL). So use -perpL for the ribbon's "left".
-    const [spLat, spLon] = perpL(srcSlot.bearing)
-    ep.left[0] = [srcSlot.pos[1] - spLon * halfW * nodeLs, srcSlot.pos[0] - spLat * halfW]
-    ep.right[0] = [srcSlot.pos[1] + spLon * halfW * nodeLs, srcSlot.pos[0] + spLat * halfW]
-
-    // Dst endpoint
-    const [dpLat, dpLon] = perpL(dstSlot.bearing)
-    const li = ep.left.length - 1
-    ep.left[li] = [dstSlot.pos[1] - dpLon * halfW * nodeLs, dstSlot.pos[0] - dpLat * halfW]
-    ep.right[li] = [dstSlot.pos[1] + dpLon * halfW * nodeLs, dstSlot.pos[0] + dpLat * halfW]
-  }
+  // (Force-alignment removed — using direct coordinate copying below)
 
   // Compute body edge pairs for each through-node.
   // Use exact geometry (not perpAt) to ensure alignment with edge endpoints.
@@ -521,51 +496,59 @@ export function renderFlowGraphSinglePoly(
     srcTrunkPairs.set(nid, tp)
   }
 
-  // Final alignment: at source nodes, force trunk endpoints = first edge endpoints
-  for (const [nid, layout] of layouts) {
-    if (!layout.isSource) continue
-    const outs = [...outEdgesOf.get(nid)!]
-    if (outs.length === 0) continue
-    outs.sort((a, b) =>
-      perpProjection(nodeMap.get(a.to)!.pos, layout.node.pos, layout.node.bearing, nodeLs) -
-      perpProjection(nodeMap.get(b.to)!.pos, layout.node.pos, layout.node.bearing, nodeLs)
+  // Align node boundaries: at each source, copy trunk endpoints from first edge.
+  // At each through-node, edges connect directly (no body). The first output
+  // edge's start should match the incoming edge's end — but perpAt gives
+  // different perpendiculars, so we force them to match by averaging.
+  for (const n of graph.nodes) {
+    const layout = layouts.get(n.id)!
+    const ins = [...inEdgesOf.get(n.id)!].sort((a, b) =>
+      perpProjection(nodeMap.get(a.from)!.pos, n.pos, n.bearing, nodeLs) -
+      perpProjection(nodeMap.get(b.from)!.pos, n.pos, n.bearing, nodeLs)
     )
-    const firstEdge = edgePairs.get(eid(outs[0]))!
-    const tp = srcTrunkPairs.get(nid)!
-    const tpLi = tp.left.length - 1
-    // Copy first output edge's start points to trunk end points
-    tp.left[tpLi] = [...firstEdge.left[0]] as [number, number]
-    tp.right[tpLi] = [...firstEdge.right[0]] as [number, number]
-  }
-
-  // At through-nodes with body: force body endpoints = edge endpoints
-  for (const [nid, layout] of layouts) {
-    if (layout.inWeight === 0 || layout.outWeight === 0) continue
-    if (layout.isSource || layout.isSink) continue
-    const bp = bodyPairs.get(nid)
-    if (!bp) continue
-
-    // Input side: body LEFT[0] = first input edge's dst LEFT
-    const ins = [...inEdgesOf.get(nid)!].sort((a, b) =>
-      perpProjection(nodeMap.get(a.from)!.pos, layout.node.pos, layout.node.bearing, nodeLs) -
-      perpProjection(nodeMap.get(b.from)!.pos, layout.node.pos, layout.node.bearing, nodeLs)
+    const outs = [...outEdgesOf.get(n.id)!].sort((a, b) =>
+      perpProjection(nodeMap.get(a.to)!.pos, n.pos, n.bearing, nodeLs) -
+      perpProjection(nodeMap.get(b.to)!.pos, n.pos, n.bearing, nodeLs)
     )
-    if (ins.length > 0) {
-      const firstIn = edgePairs.get(eid(ins[0]))!
-      const inLi = firstIn.left.length - 1
-      bp.left[0] = [...firstIn.left[inLi]] as [number, number]
-      bp.right[0] = [...firstIn.right[inLi]] as [number, number]
+
+    // Source → first output: trunk end = first edge start
+    if (layout.isSource && outs.length > 0) {
+      const tp = srcTrunkPairs.get(n.id)
+      const firstOut = edgePairs.get(eid(outs[0]))
+      if (tp && firstOut) {
+        const li = tp.left.length - 1
+        tp.left[li] = firstOut.left[0]
+        tp.right[li] = firstOut.right[0]
+      }
     }
 
-    // Output side: body LEFT[last] = first output edge's src LEFT
-    const outs = [...outEdgesOf.get(nid)!].sort((a, b) =>
-      perpProjection(nodeMap.get(a.to)!.pos, layout.node.pos, layout.node.bearing, nodeLs) -
-      perpProjection(nodeMap.get(b.to)!.pos, layout.node.pos, layout.node.bearing, nodeLs)
-    )
-    if (outs.length > 0) {
-      const firstOut = edgePairs.get(eid(outs[0]))!
-      bp.left[1] = [...firstOut.left[0]] as [number, number]
-      bp.right[1] = [...firstOut.right[0]] as [number, number]
+    // Through-node: last input dst = first output src (for LEFT only — outermost)
+    if (ins.length > 0 && outs.length > 0 && !layout.isSource) {
+      const firstIn = edgePairs.get(eid(ins[0]))
+      const firstOut = edgePairs.get(eid(outs[0]))
+      if (firstIn && firstOut) {
+        // First input's dst LEFT should match first output's src LEFT
+        const inLi = firstIn.left.length - 1
+        const avg: [number, number] = [
+          (firstIn.left[inLi][0] + firstOut.left[0][0]) / 2,
+          (firstIn.left[inLi][1] + firstOut.left[0][1]) / 2,
+        ]
+        firstIn.left[inLi] = avg
+        firstOut.left[0] = [...avg] as [number, number]
+
+        // Last input's dst RIGHT should match last output's src RIGHT
+        const lastIn = edgePairs.get(eid(ins[ins.length - 1]))
+        const lastOut = edgePairs.get(eid(outs[outs.length - 1]))
+        if (lastIn && lastOut) {
+          const lInLi = lastIn.right.length - 1
+          const avgR: [number, number] = [
+            (lastIn.right[lInLi][0] + lastOut.right[0][0]) / 2,
+            (lastIn.right[lInLi][1] + lastOut.right[0][1]) / 2,
+          ]
+          lastIn.right[lInLi] = avgR
+          lastOut.right[0] = [...avgR] as [number, number]
+        }
+      }
     }
   }
 
@@ -611,10 +594,6 @@ export function renderFlowGraphSinglePoly(
     if (layout.isSource) {
       const tp = srcTrunkPairs.get(nodeId)
       if (tp) ring.push(...tp.left)
-    } else if (layout.inWeight > 0 && layout.outWeight > 0) {
-      // Through-node body bridges input→output face at full through-width
-      const bp = bodyPairs.get(nodeId)
-      if (bp) ring.push(...bp.left)
     }
 
     const outs = sortedOuts(nodeId)
@@ -693,9 +672,6 @@ export function renderFlowGraphSinglePoly(
     if (layout.isSource) {
       const tp = srcTrunkPairs.get(nodeId)
       if (tp) ring.push(...[...tp.right].reverse())
-    } else if (layout.inWeight > 0 && layout.outWeight > 0) {
-      const bp = bodyPairs.get(nodeId)
-      if (bp) ring.push(...[...bp.right].reverse())
     }
   }
 
