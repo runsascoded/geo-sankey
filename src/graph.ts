@@ -154,21 +154,20 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
       throughWeight: throughW,
       halfW,
       approachLen: (() => {
-        const base = halfW * 1.5
         const isSinkNode = outEdgesOf.get(n.id)!.length === 0 && inW > 0
-        if (!isSinkNode) return base
-        // Sinks want long approach for arrow height, but clamp to half the
-        // distance to the nearest upstream node to avoid overlapping approaches.
-        const inEs = inEdgesOf.get(n.id)!
+        const base = isSinkNode ? halfW * 8 : halfW * 1.5
+        // Clamp to fraction of distance to nearest connected node
+        // to avoid overlapping approaches on close nodes.
+        const allEs = [...inEdgesOf.get(n.id)!, ...outEdgesOf.get(n.id)!]
         let minDist = Infinity
-        for (const e of inEs) {
-          const src = nodeMap.get(e.from)!
-          const dLat = n.pos[0] - src.pos[0]
-          const dLon = (n.pos[1] - src.pos[1]) * lngScale(refLat)
+        for (const e of allEs) {
+          const other = nodeMap.get(e.from === n.id ? e.to : e.from)!
+          const dLat = n.pos[0] - other.pos[0]
+          const dLon = (n.pos[1] - other.pos[1]) * lngScale(refLat)
           minDist = Math.min(minDist, Math.sqrt(dLat * dLat + dLon * dLon))
         }
-        const maxApproach = minDist > 0 ? minDist * 0.4 : base
-        return Math.min(halfW * 8, Math.max(base, maxApproach))
+        const maxApproach = minDist > 0 ? minDist * 0.25 : base
+        return Math.min(base, Math.max(halfW * 0.5, maxApproach))
       })(),
       isSink: outEdgesOf.get(n.id)!.length === 0 && inW > 0,
       isSource: inEdgesOf.get(n.id)!.length === 0 && outW > 0,
@@ -531,6 +530,7 @@ export function renderFlowGraphSinglePoly(
         // Trace around the source node
         const srcLayout = layouts.get(inEdge.from)!
         if (srcLayout.isSource) {
+          tracedSources.add(inEdge.from)
           const tp = srcTrunkPairs.get(inEdge.from)
           if (tp) {
             ring.push(...[...tp.right].reverse())
@@ -550,12 +550,21 @@ export function renderFlowGraphSinglePoly(
     }
   }
 
-  // Find the main source (the one that feeds into the first/top input of its destination)
+  // Track which sources get traced as merge side-inputs
+  const tracedSources = new Set<string>()
+
+  // Find the main source: pick the source with highest throughput
+  // that feeds into the first input of its destination
   const features: GeoJSON.Feature[] = []
-  for (const [nid, layout] of layouts) {
-    if (!layout.isSource) continue
+  const sourcesByWeight = [...layouts.entries()]
+    .filter(([, l]) => l.isSource)
+    .sort((a, b) => b[1].throughWeight - a[1].throughWeight)
+
+  for (const [nid] of sourcesByWeight) {
+    if (tracedSources.has(nid)) continue
     const outs = sortedOuts(nid)
     if (outs.length === 0) continue
+    // Check if this source is a side-input to a merge (not the first input)
     const destIns = sortedIns(outs[0].to)
     if (destIns.length > 0 && eid(destIns[0]) !== eid(outs[0])) continue
 
@@ -563,7 +572,7 @@ export function renderFlowGraphSinglePoly(
     traceBranch(nid, null, ring)
     if (ring.length > 0) {
       ring.push(ring[0])
-      const w = pxW(pxPerWeight, layout.throughWeight)
+      const w = pxW(pxPerWeight, layouts.get(nid)!.throughWeight)
       features.push(ringFeature(ring, { color, width: w, key: `sp-${nid}`, opacity: 1 }))
     }
   }

@@ -109,6 +109,32 @@ const ferryGraph: FlowGraph = {
   ],
 }
 
+const hbtFerry: FlowGraph = {
+  nodes: [
+    { id: 'hob-so', pos: [40.7359, -74.0275], bearing: 90 },
+    { id: 'hob-14', pos: [40.7505, -74.0241], bearing: 90 },
+    { id: 'whk', pos: [40.7771, -74.0136], bearing: 130 },
+    { id: 'ph', pos: [40.7138, -74.0337], bearing: 60 },
+    { id: 'hob-split', pos: [40.7359, -74.0200], bearing: 90 },
+    { id: 'ut-merge', pos: [40.7500, -74.0180], bearing: 30 },
+    { id: 'dt-merge', pos: [40.7142, -74.0210], bearing: 90 },
+    { id: 'mt-merge', pos: [40.7580, -74.0080], bearing: 110 },
+    { id: 'mt39', pos: [40.7555, -74.0060], bearing: 110 },
+    { id: 'bpt', pos: [40.7142, -74.0169], bearing: 90 },
+  ],
+  edges: [
+    { from: 'hob-so', to: 'hob-split', weight: 30 },
+    { from: 'hob-split', to: 'ut-merge', weight: 15 },
+    { from: 'hob-split', to: 'dt-merge', weight: 15 },
+    { from: 'hob-14', to: 'ut-merge', weight: 20 },
+    { from: 'ut-merge', to: 'mt-merge', weight: 35 },
+    { from: 'whk', to: 'mt-merge', weight: 30 },
+    { from: 'mt-merge', to: 'mt39', weight: 65 },
+    { from: 'ph', to: 'dt-merge', weight: 20 },
+    { from: 'dt-merge', to: 'bpt', weight: 35 },
+  ],
+}
+
 // --- Multi-poly tests ---
 
 describe('renderFlowGraph (multi-poly)', () => {
@@ -209,6 +235,27 @@ describe('renderFlowGraphSinglePoly', () => {
     const idx = findSelfIntersection(ring)
     if (idx !== -1) {
       console.log(`Self-intersection at ring index ${idx}, points:`, ring[idx], ring[idx + 1])
+    }
+    expect(idx).toBe(-1)
+  })
+
+  it('HBT ferry: produces exactly 1 feature', () => {
+    const fc = renderFlowGraphSinglePoly(hbtFerry, defaultOpts)
+    expect(fc.features.length).toBe(1)
+  })
+
+  it('HBT ferry: ring is closed', () => {
+    const fc = renderFlowGraphSinglePoly(hbtFerry, defaultOpts)
+    const ring = getRing(fc)
+    expect(isClosed(ring)).toBe(true)
+  })
+
+  it('HBT ferry: ring has no self-intersections', () => {
+    const fc = renderFlowGraphSinglePoly(hbtFerry, defaultOpts)
+    const ring = getRing(fc)
+    const idx = findSelfIntersection(ring)
+    if (idx !== -1) {
+      console.log(`HBT self-intersection at ring index ${idx}`)
     }
     expect(idx).toBe(-1)
   })

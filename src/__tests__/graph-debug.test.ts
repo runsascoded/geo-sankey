@@ -2,56 +2,45 @@ import { describe, it } from 'vitest'
 import { renderFlowGraphSinglePoly } from '../graph'
 import type { FlowGraph, FlowGraphOpts } from '../graph'
 
-const ferryGraph: FlowGraph = {
+const hbtFerry: FlowGraph = {
   nodes: [
-    { id: 'origin', pos: [40.735, -74.055], bearing: 90 },
-    { id: 'split', pos: [40.735, -74.045], bearing: 90 },
-    { id: 'merge', pos: [40.735, -74.020], bearing: 90 },
-    { id: 'dest', pos: [40.735, -74.000], bearing: 90 },
-    { id: 'north', pos: [40.748, -74.038], bearing: 150 },
-    { id: 'south', pos: [40.720, -74.038], bearing: 30 },
+    { id: 'hob-so', pos: [40.7359, -74.0275], bearing: 90 },
+    { id: 'hob-14', pos: [40.7505, -74.0241], bearing: 90 },
+    { id: 'whk', pos: [40.7771, -74.0136], bearing: 130 },
+    { id: 'ph', pos: [40.7138, -74.0337], bearing: 60 },
+    { id: 'hob-split', pos: [40.7359, -74.0200], bearing: 90 },
+    { id: 'ut-merge', pos: [40.7500, -74.0180], bearing: 30 },
+    { id: 'dt-merge', pos: [40.7142, -74.0210], bearing: 90 },
+    { id: 'mt-merge', pos: [40.7580, -74.0080], bearing: 110 },
+    { id: 'mt39', pos: [40.7555, -74.0060], bearing: 110 },
+    { id: 'bpt', pos: [40.7142, -74.0169], bearing: 90 },
   ],
   edges: [
-    { from: 'origin', to: 'split', weight: 35 },
-    { from: 'split', to: 'merge', weight: 20 },
-    { from: 'split', to: 'south', weight: 15 },
-    { from: 'north', to: 'merge', weight: 30 },
-    { from: 'merge', to: 'dest', weight: 50 },
+    { from: 'hob-so', to: 'hob-split', weight: 30 },
+    { from: 'hob-split', to: 'ut-merge', weight: 15 },
+    { from: 'hob-split', to: 'dt-merge', weight: 15 },
+    { from: 'hob-14', to: 'ut-merge', weight: 20 },
+    { from: 'ut-merge', to: 'mt-merge', weight: 35 },
+    { from: 'whk', to: 'mt-merge', weight: 30 },
+    { from: 'mt-merge', to: 'mt39', weight: 65 },
+    { from: 'ph', to: 'dt-merge', weight: 20 },
+    { from: 'dt-merge', to: 'bpt', weight: 35 },
   ],
 }
 
-const opts: FlowGraphOpts = {
-  refLat: 40.735,
-  zoom: 14,
-  color: '#000',
-  pxPerWeight: 0.3,
-}
+const opts: FlowGraphOpts = { refLat: 40.735, zoom: 14, color: '#000', pxPerWeight: 0.3 }
 
-describe('ferry graph ring debug', () => {
-  it('dump ring points around intersection', async () => {
+describe('HBT ferry ring debug', () => {
+  it('dump ring around index 47', async () => {
     // @ts-ignore
-    const fs = await import('node:fs');
-    const fc = renderFlowGraphSinglePoly(ferryGraph, opts)
+    const fs = await import('node:fs')
+    const fc = renderFlowGraphSinglePoly(hbtFerry, opts)
     const ring = (fc.features[0].geometry as GeoJSON.Polygon).coordinates[0] as [number, number][]
     const lines = [`Ring has ${ring.length} points`]
-    for (let i = 0; i < ring.length; i++) {
+    for (let i = Math.max(0, 40); i < Math.min(ring.length, 60); i++) {
       const [lon, lat] = ring[i]
       lines.push(`[${i}] lon=${lon.toFixed(6)} lat=${lat.toFixed(6)}`)
     }
-    fs.writeFileSync('tmp/ring-debug.txt', lines.join('\n'))
-
-    // Also dump slot positions and halfW values
-    const { pxToHalfDeg, pxToDeg, lngScale } = await import('../../src/geo')
-    const refLat = 40.735, zoom = 14, geoScale = 1
-    const pxPW = 0.3
-    const lines2: string[] = []
-    lines2.push(`lngScale(${refLat}) = ${lngScale(refLat)}`)
-    lines2.push(`pxToDeg(1, 14, 1, ${refLat}) = ${pxToDeg(1, zoom, geoScale, refLat)}`)
-    for (const w of [15, 20, 30, 35, 50]) {
-      const px = w * pxPW
-      const hw = pxToHalfDeg(px, zoom, geoScale, refLat)
-      lines2.push(`weight=${w}: px=${px}, halfW=${hw.toFixed(8)} deg`)
-    }
-    fs.writeFileSync('tmp/slot-debug.txt', lines2.join('\n'))
+    fs.writeFileSync('tmp/hbt-ring-debug.txt', lines.join('\n'))
   })
 })
