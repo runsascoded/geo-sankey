@@ -5,6 +5,7 @@ import type { Param } from 'use-prms'
 import { renderFlowGraph, renderFlowGraphSinglePoly } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import { useLLZ } from '../llz'
+import { useTheme, MAP_STYLES } from '../App'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 // Full HBT ferry layout: Hoboken South splits to uptown (MT39) and downtown (BPT)
@@ -106,6 +107,8 @@ export default function FerryTest() {
     setLLZ({ lat: e.viewState.latitude, lng: e.viewState.longitude, zoom: e.viewState.zoom })
   }, [setLLZ])
 
+  const { theme } = useTheme()
+
   return (
     <div className="example">
       <h2>Hudson Ferry Flows</h2>
@@ -140,7 +143,7 @@ export default function FerryTest() {
         <MapGL
           initialViewState={{ longitude: llz.lng, latitude: llz.lat, zoom: llz.zoom }}
           style={{ width: '100%', height: '100%' }}
-          mapStyle="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+          mapStyle={MAP_STYLES[theme]}
           onMove={onMove}
         >
           <Source id="flows" type="geojson" data={geojson}>

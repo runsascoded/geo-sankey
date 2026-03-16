@@ -3,6 +3,7 @@ import Map, { Source, Layer } from 'react-map-gl/maplibre'
 import { renderFlows } from 'geo-sankey'
 import type { FlowTree, RenderFlowTreeOpts } from 'geo-sankey'
 import { useLLZ } from '../llz'
+import { useTheme, MAP_STYLES } from '../App'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 /** Multiple flow trees converging on destinations across the Hudson. */
@@ -119,7 +120,7 @@ export default function MultiTreeMerge() {
         <Map
           initialViewState={{ longitude: llz.lng, latitude: llz.lat, zoom: llz.zoom }}
           style={{ width: '100%', height: '100%' }}
-          mapStyle="https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+          mapStyle={MAP_STYLES[useTheme().theme]}
           onMove={onMove}
         >
           <Source id="flows" type="geojson" data={geojson}>

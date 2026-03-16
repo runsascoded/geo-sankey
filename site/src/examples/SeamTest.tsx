@@ -5,6 +5,7 @@ import type { Param } from 'use-prms'
 import { cubicBezier, directedBezier, ribbon, ringFeature, pxToDeg, perpAt, renderFlows } from 'geo-sankey'
 import type { LatLon, FlowTree } from 'geo-sankey'
 import { useLLZ } from '../llz'
+import { useTheme, MAP_STYLES } from '../App'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 // --- Scenario types ---
@@ -335,7 +336,7 @@ export default function SeamTest() {
         <MapGL
           initialViewState={{ longitude: llz.lng, latitude: llz.lat, zoom: llz.zoom }}
           style={{ width: '100%', height: '100%' }}
-          mapStyle="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+          mapStyle={MAP_STYLES[useTheme().theme]}
           onMove={onMove}
         >
           <Source id="seam-test" type="geojson" data={geojson}>

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, createContext, useContext } from 'react'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
-import { HotkeysProvider, useHotkeys } from 'use-kbd'
+import { HotkeysProvider, useHotkeys, SpeedDial } from 'use-kbd'
 import MultiTreeMerge from './examples/MultiTreeMerge'
 import ParallelRibbons from './examples/ParallelRibbons'
 import SeamTest from './examples/SeamTest'
@@ -19,8 +19,19 @@ const exParam: Param<string> = {
   decode: (s) => s && examples.some(e => e.id === s) ? s : examples[0].id,
 }
 
-function useTheme() {
-  const [theme, setThemeState] = useState<'light' | 'dark'>(() => {
+// --- Theme ---
+
+type Theme = 'light' | 'dark'
+const ThemeContext = createContext<{ theme: Theme; toggle: () => void }>({ theme: 'light', toggle: () => {} })
+export const useTheme = () => useContext(ThemeContext)
+
+export const MAP_STYLES = {
+  light: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+  dark: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+} as const
+
+function useThemeState() {
+  const [theme, setTheme] = useState<Theme>(() => {
     const stored = localStorage.getItem('geo-sankey-theme')
     if (stored === 'dark') return 'dark'
     if (stored === 'light') return 'light'
@@ -32,17 +43,17 @@ function useTheme() {
     localStorage.setItem('geo-sankey-theme', theme)
   }, [theme])
 
-  const toggle = useCallback(() => {
-    setThemeState(t => t === 'light' ? 'dark' : 'light')
-  }, [])
+  const toggle = useCallback(() => setTheme(t => t === 'light' ? 'dark' : 'light'), [])
 
   return { theme, toggle }
 }
 
+// --- App ---
+
 function AppInner() {
   const [active, setActive] = useUrlState('ex', exParam)
   const Example = examples.find(e => e.id === active)!.component
-  const { theme, toggle: toggleTheme } = useTheme()
+  const { toggle: toggleTheme } = useTheme()
 
   const keymap: Record<string, string> = { toggleTheme: 'd' }
   const handlers: Record<string, () => void> = { toggleTheme }
@@ -68,21 +79,31 @@ function AppInner() {
             </button>
           ))}
         </nav>
-        <button className="theme-toggle" onClick={toggleTheme} title="Shortcut: d">
-          {theme === 'light' ? '🌙' : '☀️'}
-        </button>
       </header>
       <main>
         <Example />
       </main>
+      <SpeedDial
+        actions={[
+          {
+            key: 'theme',
+            label: 'Toggle theme (d)',
+            icon: <span style={{ fontSize: 18 }}>🌓</span>,
+            onClick: toggleTheme,
+          },
+        ]}
+      />
     </div>
   )
 }
 
 export default function App() {
+  const themeState = useThemeState()
   return (
-    <HotkeysProvider>
-      <AppInner />
-    </HotkeysProvider>
+    <ThemeContext.Provider value={themeState}>
+      <HotkeysProvider>
+        <AppInner />
+      </HotkeysProvider>
+    </ThemeContext.Provider>
   )
 }
