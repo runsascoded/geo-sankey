@@ -197,6 +197,9 @@ describe('renderFlowGraphSinglePoly', () => {
     const fc = renderFlowGraphSinglePoly(simpleMerge, defaultOpts)
     const ring = getRing(fc)
     const idx = findSelfIntersection(ring)
+    if (idx !== -1) {
+      console.log(`MERGE self-intersection: i=${idx}, ring[i]=${JSON.stringify(ring[idx])}, ring[i+1]=${JSON.stringify(ring[idx+1])}, total=${ring.length}`)
+    }
     expect(idx).toBe(-1)
   })
 
