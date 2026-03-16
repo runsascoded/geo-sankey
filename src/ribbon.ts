@@ -8,6 +8,8 @@ export interface RibbonArrowOpts {
   arrowWingFactor: number
   arrowLenFactor: number
   widthPx?: number
+  /** Max fraction of path length the arrow can occupy. Default 0.4. */
+  maxArrowFraction?: number
 }
 
 /** Build a ribbon polygon with integrated arrowhead.
@@ -28,7 +30,7 @@ export function ribbonArrow(
   }
   const pathLen = cumLen[n - 1]
   const desiredArrowLen = halfW * 2 * arrowLenFactor
-  const arrowLen = min(desiredArrowLen, pathLen * 0.4)
+  const arrowLen = min(desiredArrowLen, pathLen * (opts.maxArrowFraction ?? 0.4))
   const arrowScale = desiredArrowLen > 0 ? arrowLen / desiredArrowLen : 1
   const effectiveWing = widthPx != null && widthPx < 8
     ? arrowWingFactor + (8 - widthPx) * 0.15
@@ -122,7 +124,7 @@ export function ribbonArrowEdges(path: LatLon[], halfW: number, refLat: number, 
   }
   const pathLen = cumLen[n - 1]
   const desiredArrowLen = halfW * 2 * arrowLenFactor
-  const arrowLen = min(desiredArrowLen, pathLen * 0.4)
+  const arrowLen = min(desiredArrowLen, pathLen * (opts.maxArrowFraction ?? 0.4))
   const arrowScale = desiredArrowLen > 0 ? arrowLen / desiredArrowLen : 1
   const effectiveWing = widthPx != null && widthPx < 8
     ? arrowWingFactor + (8 - widthPx) * 0.15

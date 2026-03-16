@@ -463,24 +463,18 @@ export function renderFlowGraphSinglePoly(
       const n = layout.node
       const nodeLs = lngScale(refLat)
       const [fLat, fLon] = fwd(n.bearing)
-      // Extend arrow path beyond node.pos so the 40% clamp allows a
-      // taller arrowhead. The tip will be at the path end.
-      const arrowExtraLen = layout.halfW * 2 * arrowLen
+      // Tip at node.pos. Arrow can use up to 90% of the approach path.
       const inFace: LatLon = [
         n.pos[0] - fLat * layout.approachLen,
         n.pos[1] - fLon * layout.approachLen * nodeLs,
-      ]
-      const arrowTip: LatLon = [
-        n.pos[0] + fLat * arrowExtraLen,
-        n.pos[1] + fLon * arrowExtraLen * nodeLs,
       ]
       const widthPx = pxW(pxPerWeight, layout.throughWeight)
       const minWingFactor = (widthPx + minArrowWingPx * 2) / widthPx
       const effectiveWing = max(arrowWing, minWingFactor)
       const ap = arrowEdgePairForPath(
-        straightLine(inFace, arrowTip, 10),
+        straightLine(inFace, n.pos, 10),
         layout.halfW, refLat,
-        { arrowWingFactor: effectiveWing, arrowLenFactor: arrowLen, widthPx },
+        { arrowWingFactor: effectiveWing, arrowLenFactor: arrowLen, widthPx, maxArrowFraction: 0.7 },
       )
       ring.push(...ap.left)
       if (ap.tip) ring.push(ap.tip)
