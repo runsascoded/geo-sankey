@@ -3,11 +3,13 @@ import type { Param } from 'use-prms'
 import MultiTreeMerge from './examples/MultiTreeMerge'
 import ParallelRibbons from './examples/ParallelRibbons'
 import SeamTest from './examples/SeamTest'
+import FerryTest from './examples/FerryTest'
 
 const examples = [
   { id: 'multi-tree', label: 'Flow Tree Merge', component: MultiTreeMerge },
   { id: 'parallel', label: 'Parallel Ribbons', component: ParallelRibbons },
   { id: 'seam-test', label: 'Seam Test', component: SeamTest },
+  { id: 'ferry', label: 'Ferry Cross-Tree', component: FerryTest },
 ] as const
 
 const exParam: Param<string> = {

@@ -200,6 +200,7 @@ export function renderFlowTree(
           const arrBearing = childArriveBearing
             ?? (splitChild.type === 'source' && 'bearing' in splitChild && splitChild.bearing != null
               ? splitChild.bearing : node.bearing)
+          // debug removed
           const curvePts = directedBezier(childDepart, childTarget, node.bearing, arrBearing)
           let splitPath: LatLon[] = [junctionPt, ...curvePts]
           if (reverse) splitPath = [...splitPath].reverse()
@@ -298,9 +299,9 @@ export function renderFlowTreeSinglePoly(
 
     const arrowOpts: RibbonArrowOpts = { arrowWingFactor: arrowWing, arrowLenFactor: arrowLen, widthPx: width }
 
-    // Leaf node (source) or terminal split trunk: just return edges for this segment
-    if (node.type === 'source' || isTerminalSplit) {
-      if (terminal && !isTerminalSplit) {
+    // Leaf node (source): just return edges for this segment
+    if (node.type === 'source') {
+      if (terminal) {
         const ae = ribbonArrowEdges(path, hw, refLat, arrowOpts)
         if (ae.left.length === 0) return null
         return { left: ae.left, right: ae.right, tip: ae.tip }
@@ -596,7 +597,7 @@ interface JunctionSlot {
  *  based on its position in the stacking order. The map is keyed by
  *  the child's source position (so a split branch targeting that
  *  position can look up its correct offset). */
-function buildJunctionMap(
+export function buildJunctionMap(
   trees: FlowTree[],
   opts: RenderFlowTreeOpts,
 ): Map<string, JunctionSlot> {
@@ -618,6 +619,10 @@ function buildJunctionMap(
 
     const childWidths = childIndices.map(i => nodeWidth(node.children[i], pxPerWeight))
     const totalW = childWidths.reduce((s, w) => s + w, 0)
+    const rad = node.bearing * PI / 180
+    const fwdLat = cos(rad), fwdLon = sin(rad)
+    const approachLen = hw * 1.5
+
     let cumW = 0
     for (let ci = 0; ci < childIndices.length; ci++) {
       const cw = childWidths[ci]
@@ -628,10 +633,16 @@ function buildJunctionMap(
         node.pos[0] + perpLat * offsetDeg,
         node.pos[1] + perpLon * offsetDeg * ls,
       ]
+      // Store the approach point (where the child ribbon's target is),
+      // not the junction point. Split branches need to reach the approach
+      // point to fill the same slot the child would occupy.
+      const childApproach: LatLon = [
+        junctionPt[0] - fwdLat * approachLen,
+        junctionPt[1] - fwdLon * approachLen * ls,
+      ]
       const child = node.children[childIndices[ci]]
-      // Map child's source position → its junction offset at this merge
       junctionMap.set(posKey(child.pos), {
-        offset: junctionPt,
+        offset: childApproach,
         bearing: node.bearing,
       })
       // Recurse into child subtrees
