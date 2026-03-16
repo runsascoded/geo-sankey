@@ -79,10 +79,10 @@ const simpleMerge: FlowGraph = {
 
 const simpleSplit: FlowGraph = {
   nodes: [
-    { id: 'src', pos: [40.735, -74.040], bearing: 90 },
-    { id: 'split', pos: [40.735, -74.030], bearing: 90 },
-    { id: 'd1', pos: [40.740, -74.020], bearing: 90 },
-    { id: 'd2', pos: [40.730, -74.020], bearing: 90 },
+    { id: 'src', pos: [40.735, -74.050], bearing: 90 },
+    { id: 'split', pos: [40.735, -74.040], bearing: 90 },
+    { id: 'd1', pos: [40.745, -74.020], bearing: 90 },
+    { id: 'd2', pos: [40.725, -74.020], bearing: 90 },
   ],
   edges: [
     { from: 'src', to: 'split', weight: 30 },

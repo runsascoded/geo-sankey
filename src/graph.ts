@@ -153,7 +153,23 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
       outWeight: outW,
       throughWeight: throughW,
       halfW,
-      approachLen: halfW * 1.5,
+      approachLen: (() => {
+        const base = halfW * 1.5
+        const isSinkNode = outEdgesOf.get(n.id)!.length === 0 && inW > 0
+        if (!isSinkNode) return base
+        // Sinks want long approach for arrow height, but clamp to half the
+        // distance to the nearest upstream node to avoid overlapping approaches.
+        const inEs = inEdgesOf.get(n.id)!
+        let minDist = Infinity
+        for (const e of inEs) {
+          const src = nodeMap.get(e.from)!
+          const dLat = n.pos[0] - src.pos[0]
+          const dLon = (n.pos[1] - src.pos[1]) * lngScale(refLat)
+          minDist = Math.min(minDist, Math.sqrt(dLat * dLat + dLon * dLon))
+        }
+        const maxApproach = minDist > 0 ? minDist * 0.4 : base
+        return Math.min(halfW * 8, Math.max(base, maxApproach))
+      })(),
       isSink: outEdgesOf.get(n.id)!.length === 0 && inW > 0,
       isSource: inEdgesOf.get(n.id)!.length === 0 && outW > 0,
     })
