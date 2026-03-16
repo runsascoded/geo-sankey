@@ -65,10 +65,10 @@ const singleEdge: FlowGraph = {
 
 const simpleMerge: FlowGraph = {
   nodes: [
-    { id: 'n1', pos: [40.740, -74.035], bearing: 150 },
-    { id: 'n2', pos: [40.730, -74.035], bearing: 30 },
+    { id: 'n1', pos: [40.745, -74.040], bearing: 150 },
+    { id: 'n2', pos: [40.725, -74.040], bearing: 30 },
     { id: 'merge', pos: [40.735, -74.025], bearing: 90 },
-    { id: 'dest', pos: [40.735, -74.010], bearing: 90 },
+    { id: 'dest', pos: [40.735, -74.005], bearing: 90 },
   ],
   edges: [
     { from: 'n1', to: 'merge', weight: 20 },

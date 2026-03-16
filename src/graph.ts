@@ -153,25 +153,31 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
       outWeight: outW,
       throughWeight: throughW,
       halfW,
-      approachLen: (() => {
-        const isSinkNode = outEdgesOf.get(n.id)!.length === 0 && inW > 0
-        const base = isSinkNode ? halfW * 8 : halfW * 1.5
-        // Clamp to fraction of distance to nearest connected node
-        // to avoid overlapping approaches on close nodes.
-        const allEs = [...inEdgesOf.get(n.id)!, ...outEdgesOf.get(n.id)!]
-        let minDist = Infinity
-        for (const e of allEs) {
-          const other = nodeMap.get(e.from === n.id ? e.to : e.from)!
-          const dLat = n.pos[0] - other.pos[0]
-          const dLon = (n.pos[1] - other.pos[1]) * lngScale(refLat)
-          minDist = Math.min(minDist, Math.sqrt(dLat * dLat + dLon * dLon))
-        }
-        const maxApproach = minDist > 0 ? minDist * 0.25 : base
-        return Math.min(base, Math.max(halfW * 0.5, maxApproach))
-      })(),
+      approachLen: (outEdgesOf.get(n.id)!.length === 0 && inW > 0)
+        ? halfW * 8
+        : halfW * 1.5,
       isSink: outEdgesOf.get(n.id)!.length === 0 && inW > 0,
       isSource: inEdgesOf.get(n.id)!.length === 0 && outW > 0,
     })
+  }
+
+  // Second pass: clamp approaches per-edge to prevent overlap.
+  // For each edge, if src.approach + dst.approach > edge distance,
+  // reduce both proportionally.
+  for (const e of graph.edges) {
+    const srcL = layouts.get(e.from)!
+    const dstL = layouts.get(e.to)!
+    const dLat = dstL.node.pos[0] - srcL.node.pos[0]
+    const dLon = (dstL.node.pos[1] - srcL.node.pos[1]) * ls
+    const dist = Math.sqrt(dLat * dLat + dLon * dLon)
+    const totalApproach = srcL.approachLen + dstL.approachLen
+    if (totalApproach > dist * 0.9 && dist > 0) {
+      // Distribute available space proportionally to current approach lengths
+      const available = dist * 0.9
+      const srcShare = srcL.approachLen / totalApproach
+      srcL.approachLen = max(srcL.halfW * 0.3, available * srcShare)
+      dstL.approachLen = max(dstL.halfW * 0.3, available * (1 - srcShare))
+    }
   }
 
   // Compute slots for each node
@@ -454,6 +460,20 @@ export function renderFlowGraphSinglePoly(
       perpProjection(nodeMap.get(a.from)!.pos, layouts.get(nodeId)!.node.pos, layouts.get(nodeId)!.node.bearing, ls) -
       perpProjection(nodeMap.get(b.from)!.pos, layouts.get(nodeId)!.node.pos, layouts.get(nodeId)!.node.bearing, ls)
     )
+  }
+
+  /** Compute [lon, lat] boundary corners for a through-node. */
+  function nodeBoundaryCorner(nodeId: string, side: 'left' | 'right', face: 'in' | 'out'): [number, number] {
+    const layout = layouts.get(nodeId)!
+    const n = layout.node
+    const nodeLs = lngScale(refLat)
+    const [fLat, fLon] = fwd(n.bearing)
+    const [pLat, pLon] = perpL(n.bearing)
+    const sign = side === 'left' ? 1 : -1
+    const faceSign = face === 'out' ? 1 : -1
+    const lat = n.pos[0] + fLat * layout.approachLen * faceSign + pLat * layout.halfW * sign
+    const lon = n.pos[1] + fLon * layout.approachLen * faceSign * nodeLs + pLon * layout.halfW * sign * nodeLs
+    return [lon, lat]
   }
 
   /** Recursively trace a branch: forward along left edges to sink,
