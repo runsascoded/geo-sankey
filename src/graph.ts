@@ -512,7 +512,61 @@ export function renderFlowGraphSinglePoly(
     const ls = lngScale(refLat)
     const [fLat, fLon] = fwd(n.bearing)
     const outFace: LatLon = [n.pos[0] + fLat * layout.approachLen, n.pos[1] + fLon * layout.approachLen * ls]
-    srcTrunkPairs.set(nid, edgePairForPath(straightLine(n.pos, outFace), layout.halfW, refLat))
+    const tp = edgePairForPath(straightLine(n.pos, outFace), layout.halfW, refLat)
+    // Force-align output face endpoint to exact geometry
+    const [pL, pN] = perpL(n.bearing)
+    const tpLi = tp.left.length - 1
+    tp.left[tpLi] = [outFace[1] - pN * layout.halfW * nodeLs, outFace[0] - pL * layout.halfW]
+    tp.right[tpLi] = [outFace[1] + pN * layout.halfW * nodeLs, outFace[0] + pL * layout.halfW]
+    srcTrunkPairs.set(nid, tp)
+  }
+
+  // Final alignment: at source nodes, force trunk endpoints = first edge endpoints
+  for (const [nid, layout] of layouts) {
+    if (!layout.isSource) continue
+    const outs = [...outEdgesOf.get(nid)!]
+    if (outs.length === 0) continue
+    outs.sort((a, b) =>
+      perpProjection(nodeMap.get(a.to)!.pos, layout.node.pos, layout.node.bearing, nodeLs) -
+      perpProjection(nodeMap.get(b.to)!.pos, layout.node.pos, layout.node.bearing, nodeLs)
+    )
+    const firstEdge = edgePairs.get(eid(outs[0]))!
+    const tp = srcTrunkPairs.get(nid)!
+    const tpLi = tp.left.length - 1
+    // Copy first output edge's start points to trunk end points
+    tp.left[tpLi] = [...firstEdge.left[0]] as [number, number]
+    tp.right[tpLi] = [...firstEdge.right[0]] as [number, number]
+  }
+
+  // At through-nodes with body: force body endpoints = edge endpoints
+  for (const [nid, layout] of layouts) {
+    if (layout.inWeight === 0 || layout.outWeight === 0) continue
+    if (layout.isSource || layout.isSink) continue
+    const bp = bodyPairs.get(nid)
+    if (!bp) continue
+
+    // Input side: body LEFT[0] = first input edge's dst LEFT
+    const ins = [...inEdgesOf.get(nid)!].sort((a, b) =>
+      perpProjection(nodeMap.get(a.from)!.pos, layout.node.pos, layout.node.bearing, nodeLs) -
+      perpProjection(nodeMap.get(b.from)!.pos, layout.node.pos, layout.node.bearing, nodeLs)
+    )
+    if (ins.length > 0) {
+      const firstIn = edgePairs.get(eid(ins[0]))!
+      const inLi = firstIn.left.length - 1
+      bp.left[0] = [...firstIn.left[inLi]] as [number, number]
+      bp.right[0] = [...firstIn.right[inLi]] as [number, number]
+    }
+
+    // Output side: body LEFT[last] = first output edge's src LEFT
+    const outs = [...outEdgesOf.get(nid)!].sort((a, b) =>
+      perpProjection(nodeMap.get(a.to)!.pos, layout.node.pos, layout.node.bearing, nodeLs) -
+      perpProjection(nodeMap.get(b.to)!.pos, layout.node.pos, layout.node.bearing, nodeLs)
+    )
+    if (outs.length > 0) {
+      const firstOut = edgePairs.get(eid(outs[0]))!
+      bp.left[1] = [...firstOut.left[0]] as [number, number]
+      bp.right[1] = [...firstOut.right[0]] as [number, number]
+    }
   }
 
   // --- Iterative perimeter walk ---
