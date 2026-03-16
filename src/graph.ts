@@ -82,6 +82,31 @@ function eid(e: GFlowEdge): string {
   return `${e.from}→${e.to}`
 }
 
+/** Build an edge path: short approach at exact bearing on both ends,
+ *  bezier in between. Ensures perpAt at endpoints matches node bearing. */
+function edgePath(srcSlot: Slot, dstSlot: Slot): LatLon[] {
+  const bezier = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
+  // Append a few points at exact arrival bearing at the end
+  const arrRad = dstSlot.bearing * PI / 180
+  const segLen = 0.0003
+  const beforeEnd: LatLon = [
+    dstSlot.pos[0] - cos(arrRad) * segLen,
+    dstSlot.pos[1] - sin(arrRad) * segLen,
+  ]
+  // Prepend a few points at exact departure bearing at the start
+  const depRad = srcSlot.bearing * PI / 180
+  const afterStart: LatLon = [
+    srcSlot.pos[0] + cos(depRad) * segLen,
+    srcSlot.pos[1] + sin(depRad) * segLen,
+  ]
+  // Replace the first and last bezier points with exact-bearing segments
+  bezier[0] = srcSlot.pos
+  bezier.splice(1, 0, afterStart)
+  bezier[bezier.length - 1] = beforeEnd
+  bezier.push([...dstSlot.pos] as LatLon)
+  return bezier
+}
+
 function straightLine(start: LatLon, end: LatLon, n = 5): LatLon[] {
   const pts: LatLon[] = []
   for (let i = 0; i <= n; i++) {
@@ -186,18 +211,19 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
     const [fLat, fLon] = fwd(n.bearing)
     const [pLat, pLon] = perpL(n.bearing)
 
-    // Input slots
+    // Input slots — centered on the THROUGH width so outermost edges
+    // align with the node boundary (not just the input total).
     const inEdges = inEdgesOf.get(n.id)!
-    // Sort by perpendicular projection of source position (most-negative first)
     inEdges.sort((a, b) =>
       perpProjection(nodeMap.get(a.from)!.pos, n.pos, n.bearing, ls) -
       perpProjection(nodeMap.get(b.from)!.pos, n.pos, n.bearing, ls)
     )
-    const inTotalPx = inEdges.reduce((s, e) => s + pxW(pxPerWeight, e.weight), 0)
+    const throughPx = pxW(pxPerWeight, layout.throughWeight)
     let inCum = 0
     for (const e of inEdges) {
       const ePx = pxW(pxPerWeight, e.weight)
-      const centerOffset = -inTotalPx / 2 + inCum + ePx / 2
+      // Offset from -throughPx/2 so outermost slot edge = node boundary
+      const centerOffset = -throughPx / 2 + inCum + ePx / 2
       inCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
       layout.inSlots.set(eid(e), {
@@ -216,11 +242,10 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
       perpProjection(nodeMap.get(a.to)!.pos, n.pos, n.bearing, ls) -
       perpProjection(nodeMap.get(b.to)!.pos, n.pos, n.bearing, ls)
     )
-    const outTotalPx = outEdges.reduce((s, e) => s + pxW(pxPerWeight, e.weight), 0)
     let outCum = 0
     for (const e of outEdges) {
       const ePx = pxW(pxPerWeight, e.weight)
-      const centerOffset = -outTotalPx / 2 + outCum + ePx / 2
+      const centerOffset = -throughPx / 2 + outCum + ePx / 2
       outCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
       layout.outSlots.set(eid(e), {
@@ -260,7 +285,7 @@ export function renderFlowGraph(
     const ePx = pxW(pxPerWeight, edge.weight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
 
-    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
+    const path = edgePath(srcSlot, dstSlot)
     const ring = ribbon(path, halfW, refLat)
     if (ring.length) {
       features.push(ringFeature(ring, { color, width: ePx, key: id, opacity: 1 }))
@@ -398,7 +423,7 @@ export function renderFlowGraphSinglePoly(
     const dstSlot = dstLayout.inSlots.get(id)!
     const ePx = pxW(pxPerWeight, edge.weight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
-    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
+    const path = edgePath(srcSlot, dstSlot)
     edgePairs.set(id, edgePairForPath(path, halfW, refLat))
   }
 
