@@ -427,16 +427,63 @@ export function renderFlowGraphSinglePoly(
     edgePairs.set(id, edgePairForPath(path, halfW, refLat))
   }
 
-  // Compute body edge pairs for each through-node
+  // Force-align edge ribbon endpoints to exact node boundary positions.
+  // This overrides perpAt-computed positions with geometrically correct ones.
+  for (const edge of graph.edges) {
+    const id = eid(edge)
+    const ep = edgePairs.get(id)!
+    const srcSlot = layouts.get(edge.from)!.outSlots.get(id)!
+    const dstSlot = layouts.get(edge.to)!.inSlots.get(id)!
+    const ePx = pxW(pxPerWeight, edge.weight)
+    const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
+    const nodeLs = lngScale(refLat)
+
+    // Src endpoint: compute exact LEFT/RIGHT using ribbon's perpAt convention.
+    // ribbon() uses perpAt which returns [-dlon/len, dlat/len] — opposite of perpL.
+    // LEFT = pos + perpAt*halfW, RIGHT = pos - perpAt*halfW.
+    // For bearing B, perpAt for a straight path at B gives [-sin(B), cos(B)]
+    // (the NEGATIVE of perpL). So use -perpL for the ribbon's "left".
+    const [spLat, spLon] = perpL(srcSlot.bearing)
+    ep.left[0] = [srcSlot.pos[1] - spLon * halfW * nodeLs, srcSlot.pos[0] - spLat * halfW]
+    ep.right[0] = [srcSlot.pos[1] + spLon * halfW * nodeLs, srcSlot.pos[0] + spLat * halfW]
+
+    // Dst endpoint
+    const [dpLat, dpLon] = perpL(dstSlot.bearing)
+    const li = ep.left.length - 1
+    ep.left[li] = [dstSlot.pos[1] - dpLon * halfW * nodeLs, dstSlot.pos[0] - dpLat * halfW]
+    ep.right[li] = [dstSlot.pos[1] + dpLon * halfW * nodeLs, dstSlot.pos[0] + dpLat * halfW]
+  }
+
+  // Compute body edge pairs for each through-node.
+  // Use exact geometry (not perpAt) to ensure alignment with edge endpoints.
   const bodyPairs = new Map<string, EdgePair>()
+  const nodeLs = lngScale(refLat)
   for (const [nid, layout] of layouts) {
     if (layout.inWeight === 0 || layout.outWeight === 0) continue
     const n = layout.node
-    const ls = lngScale(refLat)
-    const [fLat, fLon] = fwd(n.bearing)
-    const inFace: LatLon = [n.pos[0] - fLat * layout.approachLen, n.pos[1] - fLon * layout.approachLen * ls]
-    const outFace: LatLon = [n.pos[0] + fLat * layout.approachLen, n.pos[1] + fLon * layout.approachLen * ls]
-    bodyPairs.set(nid, edgePairForPath(straightLine(inFace, outFace), layout.halfW, refLat))
+    const [fL, fN] = fwd(n.bearing)
+    const [pL, pN] = perpL(n.bearing)
+    const hw = layout.halfW
+    const ap = layout.approachLen
+    // Body = rectangle from input face to output face at ±throughHalfW.
+    // Use -perpL for "left" to match ribbon convention (perpAt's left = -perpL)
+    const inLeft: [number, number] = [
+      n.pos[1] - fN * ap * nodeLs - pN * hw * nodeLs,
+      n.pos[0] - fL * ap - pL * hw,
+    ]
+    const outLeft: [number, number] = [
+      n.pos[1] + fN * ap * nodeLs - pN * hw * nodeLs,
+      n.pos[0] + fL * ap - pL * hw,
+    ]
+    const inRight: [number, number] = [
+      n.pos[1] - fN * ap * nodeLs + pN * hw * nodeLs,
+      n.pos[0] - fL * ap + pL * hw,
+    ]
+    const outRight: [number, number] = [
+      n.pos[1] + fN * ap * nodeLs + pN * hw * nodeLs,
+      n.pos[0] + fL * ap + pL * hw,
+    ]
+    bodyPairs.set(nid, { left: [inLeft, outLeft], right: [inRight, outRight] })
   }
 
   // Compute arrowhead edge pairs for sinks
@@ -510,11 +557,11 @@ export function renderFlowGraphSinglePoly(
     if (layout.isSource) {
       const tp = srcTrunkPairs.get(nodeId)
       if (tp) ring.push(...tp.left)
+    } else if (layout.inWeight > 0 && layout.outWeight > 0) {
+      // Through-node body bridges input→output face at full through-width
+      const bp = bodyPairs.get(nodeId)
+      if (bp) ring.push(...bp.left)
     }
-    // Through-nodes: NO body prefix. The edge endpoints at input/output
-    // faces may not align (different widths), but the edges tile within
-    // each face. The ring walks edge-by-edge, and the gaps at the node
-    // center are handled by the edge bezier endpoints being at slot positions.
 
     const outs = sortedOuts(nodeId)
 
@@ -592,6 +639,9 @@ export function renderFlowGraphSinglePoly(
     if (layout.isSource) {
       const tp = srcTrunkPairs.get(nodeId)
       if (tp) ring.push(...[...tp.right].reverse())
+    } else if (layout.inWeight > 0 && layout.outWeight > 0) {
+      const bp = bodyPairs.get(nodeId)
+      if (bp) ring.push(...[...bp.right].reverse())
     }
   }
 
