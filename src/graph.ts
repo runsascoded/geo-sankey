@@ -179,7 +179,7 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
       throughWeight: throughW,
       halfW,
       approachLen: (outEdgesOf.get(n.id)!.length === 0 && inW > 0)
-        ? halfW * 8
+        ? halfW * 4  // sinks need longer approach for arrow height
         : halfW * 1.5,
       isSink: outEdgesOf.get(n.id)!.length === 0 && inW > 0,
       isSource: inEdgesOf.get(n.id)!.length === 0 && outW > 0,
@@ -542,7 +542,8 @@ export function renderFlowGraphSinglePoly(
       const n = layout.node
       const nodeLs = lngScale(refLat)
       const [fLat, fLon] = fwd(n.bearing)
-      // Tip at node.pos. Arrow can use up to 90% of the approach path.
+      // Tip at node.pos. Arrow eats backward into the trunk.
+      // Approach length determines the arrow budget.
       const inFace: LatLon = [
         n.pos[0] - fLat * layout.approachLen,
         n.pos[1] - fLon * layout.approachLen * nodeLs,
@@ -553,7 +554,7 @@ export function renderFlowGraphSinglePoly(
       const ap = arrowEdgePairForPath(
         straightLine(inFace, n.pos, 10),
         layout.halfW, refLat,
-        { arrowWingFactor: effectiveWing, arrowLenFactor: arrowLen, widthPx, maxArrowFraction: 0.7 },
+        { arrowWingFactor: effectiveWing, arrowLenFactor: arrowLen, widthPx, maxArrowFraction: 0.85 },
       )
       ring.push(...ap.left)
       if (ap.tip) ring.push(ap.tip)

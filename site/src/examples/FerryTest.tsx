@@ -45,6 +45,7 @@ export default function FerryTest() {
   const [showNodes, setShowNodes] = useUrlState('nodes', boolParam)
   const [arrowWing, setArrowWing] = useUrlState('aw', numParam(2.5))
   const [arrowLen, setArrowLen] = useUrlState('al', numParam(2.0))
+  const [opacity, setOpacity] = useUrlState('o', numParam(0.5))
 
   const graphOpts: FlowGraphOpts = {
     refLat: 40.735,
@@ -110,6 +111,12 @@ export default function FerryTest() {
           {' '}Nodes
         </label>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 12 }}>Opacity:</label>
+          <input type="range" min="0.1" max="1" step="0.05" value={opacity}
+            onChange={e => setOpacity(parseFloat(e.target.value))} style={{ width: 80 }} />
+          <span style={{ fontSize: 11, minWidth: 24 }}>{opacity.toFixed(2)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <label style={{ fontSize: 12 }}>Wing:</label>
           <input type="range" min="1" max="5" step="0.1" value={arrowWing}
             onChange={e => setArrowWing(parseFloat(e.target.value))} style={{ width: 80 }} />
@@ -133,7 +140,7 @@ export default function FerryTest() {
             <Layer
               id="flows-fill"
               type="fill"
-              paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': 0.5 }}
+              paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': opacity }}
             />
           </Source>
           {showNodes && (
