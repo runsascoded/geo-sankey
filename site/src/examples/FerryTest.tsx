@@ -43,8 +43,8 @@ export default function FerryTest() {
   const [singlePoly, setSinglePoly] = useUrlState('sp', boolParam)
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', boolParam)
-  const [arrowWing, setArrowWing] = useUrlState('aw', numParam(2.5))
-  const [arrowLen, setArrowLen] = useUrlState('al', numParam(2.0))
+  const [arrowWing, setArrowWing] = useUrlState('aw', numParam(1.6))
+  const [arrowLen, setArrowLen] = useUrlState('al', numParam(1.3))
   const [opacity, setOpacity] = useUrlState('o', numParam(0.5))
 
   const graphOpts: FlowGraphOpts = {

@@ -1,6 +1,6 @@
 import type { LatLon } from './types'
 import { lngScale, pxToHalfDeg, pxToDeg } from './geo'
-import { directedBezier } from './path'
+import { directedBezier, perpAt } from './path'
 import { ribbon, ribbonArrow, ribbonEdges, ribbonArrowEdges, ringFeature } from './ribbon'
 import type { RibbonArrowOpts } from './ribbon'
 
@@ -34,9 +34,9 @@ export interface FlowGraphOpts {
   geoScale?: number
   pxPerWeight: number | ((w: number) => number)
   color: string
-  arrowWing?: number        // wing width multiplier, default 2.5
-  arrowLen?: number         // arrow length multiplier, default 2.0
-  minArrowWingPx?: number   // minimum wing width in px beyond trunk edge, default 6
+  arrowWing?: number        // wing width multiplier, default 1.6
+  arrowLen?: number         // arrow length multiplier, default 1.3
+  minArrowWingPx?: number   // minimum wing extension in px beyond trunk edge, default 0
   plugBearingDeg?: number   // bearing convergence for crevice plugging, default 1
   plugFraction?: number     // distance convergence for crevice plugging, default 0.3
 }
@@ -60,6 +60,11 @@ interface NodeLayout {
   approachLen: number
   isSink: boolean
   isSource: boolean
+  // Face corners in [lon, lat] format (for perimeter walk)
+  inFaceLeft: [number, number]
+  inFaceRight: [number, number]
+  outFaceLeft: [number, number]
+  outFaceRight: [number, number]
 }
 
 // --- Helpers ---
@@ -82,29 +87,59 @@ function eid(e: GFlowEdge): string {
   return `${e.from}→${e.to}`
 }
 
-/** Build an edge path: short approach at exact bearing on both ends,
- *  bezier in between. Ensures perpAt at endpoints matches node bearing. */
-function edgePath(srcSlot: Slot, dstSlot: Slot): LatLon[] {
-  const bezier = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
-  // Append a few points at exact arrival bearing at the end
-  const arrRad = dstSlot.bearing * PI / 180
-  const segLen = 0.0003
-  const beforeEnd: LatLon = [
-    dstSlot.pos[0] - cos(arrRad) * segLen,
-    dstSlot.pos[1] - sin(arrRad) * segLen,
-  ]
-  // Prepend a few points at exact departure bearing at the start
-  const depRad = srcSlot.bearing * PI / 180
-  const afterStart: LatLon = [
-    srcSlot.pos[0] + cos(depRad) * segLen,
-    srcSlot.pos[1] + sin(depRad) * segLen,
-  ]
-  // Replace the first and last bezier points with exact-bearing segments
-  bezier[0] = srcSlot.pos
-  bezier.splice(1, 0, afterStart)
-  bezier[bezier.length - 1] = beforeEnd
-  bezier.push([...dstSlot.pos] as LatLon)
-  return bezier
+/** Compute LEFT and RIGHT offset curves for an edge bezier.
+ *  Uses node bearing perpendicular at endpoints (not bezier tangent)
+ *  to ensure alignment at node boundaries. Interior points use perpAt. */
+function offsetCurve(
+  path: LatLon[], halfW: number, refLat: number,
+  startBearing: number, endBearing: number,
+): { left: [number, number][]; right: [number, number][] } {
+  const n = path.length
+  if (n < 2) return { left: [], right: [] }
+  const ls = lngScale(refLat)
+  const left: [number, number][] = []
+  const right: [number, number][] = []
+
+  // Compute perpendicular at each point: blend from node-bearing perp
+  // at endpoints to bezier-tangent perp in the interior.
+  // "perpRibbon" for bearing B: [-sin(B), cos(B)] (opposite of perpL,
+  // matching ribbon() convention where perpAt gives [-dx/len, dy/len]).
+  const startRad = startBearing * PI / 180
+  const startPerp: LatLon = [-sin(startRad), cos(startRad)]
+  const endRad = endBearing * PI / 180
+  const endPerp: LatLon = [-sin(endRad), cos(endRad)]
+
+  const blendZone = Math.min(3, Math.floor(n / 4)) // blend over first/last few points
+
+  for (let i = 0; i < n; i++) {
+    let pLat: number, pLon: number
+
+    if (i < blendZone) {
+      // Near start: blend from node bearing to bezier tangent
+      const t = blendZone > 0 ? i / blendZone : 1
+      const [bpLat, bpLon] = perpAt(path, i)
+      pLat = startPerp[0] * (1 - t) + bpLat * t
+      pLon = startPerp[1] * (1 - t) + bpLon * t
+    } else if (i >= n - blendZone) {
+      // Near end: blend from bezier tangent to node bearing
+      const t = blendZone > 0 ? (n - 1 - i) / blendZone : 1
+      const [bpLat, bpLon] = perpAt(path, i)
+      pLat = endPerp[0] * (1 - t) + bpLat * t
+      pLon = endPerp[1] * (1 - t) + bpLon * t
+    } else {
+      // Interior: use bezier tangent
+      ;[pLat, pLon] = perpAt(path, i)
+    }
+
+    // Normalize
+    const len = Math.sqrt(pLat * pLat + pLon * pLon)
+    if (len > 0) { pLat /= len; pLon /= len }
+
+    left.push([path[i][1] + pLon * halfW * ls, path[i][0] + pLat * halfW])
+    right.push([path[i][1] - pLon * halfW * ls, path[i][0] - pLat * halfW])
+  }
+
+  return { left, right }
 }
 
 function straightLine(start: LatLon, end: LatLon, n = 5): LatLon[] {
@@ -170,6 +205,12 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
     const outW = outEdgesOf.get(n.id)!.reduce((s, e) => s + e.weight, 0)
     const throughW = max(inW, outW)
     const halfW = pxToHalfDeg(pxW(pxPerWeight, throughW), zoom, geoScale, refLat)
+    // Face corners: perpRibbon = [-sin(B), cos(B)] for ribbon convention
+    const bRad = n.bearing * PI / 180
+    const pR: [number, number] = [-sin(bRad), cos(bRad)] // perpRibbon [lat, lon]
+    const fL = cos(bRad), fN = sin(bRad) // forward [lat, lon]
+    const ap = (outEdgesOf.get(n.id)!.length === 0 && inW > 0)
+      ? halfW * 4 : halfW * 1.5
     layouts.set(n.id, {
       node: n,
       inSlots: new Map(),
@@ -178,11 +219,14 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
       outWeight: outW,
       throughWeight: throughW,
       halfW,
-      approachLen: (outEdgesOf.get(n.id)!.length === 0 && inW > 0)
-        ? halfW * 4  // sinks need longer approach for arrow height
-        : halfW * 1.5,
+      approachLen: ap,
       isSink: outEdgesOf.get(n.id)!.length === 0 && inW > 0,
       isSource: inEdgesOf.get(n.id)!.length === 0 && outW > 0,
+      // Face corners [lon, lat] — using perpRibbon (opposite of perpL)
+      inFaceLeft:   [n.pos[1] - fN * ap * ls + pR[1] * halfW * ls, n.pos[0] - fL * ap + pR[0] * halfW],
+      inFaceRight:  [n.pos[1] - fN * ap * ls - pR[1] * halfW * ls, n.pos[0] - fL * ap - pR[0] * halfW],
+      outFaceLeft:  [n.pos[1] + fN * ap * ls + pR[1] * halfW * ls, n.pos[0] + fL * ap + pR[0] * halfW],
+      outFaceRight: [n.pos[1] + fN * ap * ls - pR[1] * halfW * ls, n.pos[0] + fL * ap - pR[0] * halfW],
     })
   }
 
@@ -269,7 +313,7 @@ export function renderFlowGraph(
 ): GeoJSON.FeatureCollection {
   const {
     refLat, zoom, geoScale = 1, pxPerWeight, color,
-    arrowWing = 2.5, arrowLen = 2.0, minArrowWingPx = 6,
+    arrowWing = 1.6, arrowLen = 1.3, minArrowWingPx = 0,
   } = opts
   const layouts = computeLayout(graph, opts)
   const features: GeoJSON.Feature[] = []
@@ -395,7 +439,7 @@ export function renderFlowGraphSinglePoly(
 ): GeoJSON.FeatureCollection {
   const {
     refLat, zoom, geoScale = 1, pxPerWeight, color,
-    arrowWing = 2.5, arrowLen = 2.0, minArrowWingPx = 6,
+    arrowWing = 1.6, arrowLen = 1.3, minArrowWingPx = 0,
     plugBearingDeg = 1, plugFraction = 0.3,
   } = opts
   const layouts = computeLayout(graph, opts)
@@ -423,41 +467,19 @@ export function renderFlowGraphSinglePoly(
     const ePx = pxW(pxPerWeight, edge.weight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
     const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
-    edgePairs.set(id, edgePairForPath(path, halfW, refLat))
+    // Use offsetCurve with node bearings at endpoints for alignment
+    edgePairs.set(id, offsetCurve(path, halfW, refLat, srcSlot.bearing, dstSlot.bearing))
   }
 
-  // (Force-alignment removed — using direct coordinate copying below)
-
-  // Compute body edge pairs for each through-node.
-  // Use exact geometry (not perpAt) to ensure alignment with edge endpoints.
+  // Body pairs: just face corners (2 points per side), computed from node geometry.
+  // Body pairs: use precomputed face corners from layout
   const bodyPairs = new Map<string, EdgePair>()
-  const nodeLs = lngScale(refLat)
   for (const [nid, layout] of layouts) {
     if (layout.inWeight === 0 || layout.outWeight === 0) continue
-    const n = layout.node
-    const [fL, fN] = fwd(n.bearing)
-    const [pL, pN] = perpL(n.bearing)
-    const hw = layout.halfW
-    const ap = layout.approachLen
-    // Body = rectangle from input face to output face at ±throughHalfW.
-    // Use -perpL for "left" to match ribbon convention (perpAt's left = -perpL)
-    const inLeft: [number, number] = [
-      n.pos[1] - fN * ap * nodeLs - pN * hw * nodeLs,
-      n.pos[0] - fL * ap - pL * hw,
-    ]
-    const outLeft: [number, number] = [
-      n.pos[1] + fN * ap * nodeLs - pN * hw * nodeLs,
-      n.pos[0] + fL * ap - pL * hw,
-    ]
-    const inRight: [number, number] = [
-      n.pos[1] - fN * ap * nodeLs + pN * hw * nodeLs,
-      n.pos[0] - fL * ap + pL * hw,
-    ]
-    const outRight: [number, number] = [
-      n.pos[1] + fN * ap * nodeLs + pN * hw * nodeLs,
-      n.pos[0] + fL * ap + pL * hw,
-    ]
-    bodyPairs.set(nid, { left: [inLeft, outLeft], right: [inRight, outRight] })
+    bodyPairs.set(nid, {
+      left: [layout.inFaceLeft, layout.outFaceLeft],
+      right: [layout.inFaceRight, layout.outFaceRight],
+    })
   }
 
   // Compute arrowhead edge pairs for sinks
@@ -486,7 +508,7 @@ export function renderFlowGraphSinglePoly(
     const ls = lngScale(refLat)
     const [fLat, fLon] = fwd(n.bearing)
     const outFace: LatLon = [n.pos[0] + fLat * layout.approachLen, n.pos[1] + fLon * layout.approachLen * ls]
-    srcTrunkPairs.set(nid, edgePairForPath(straightLine(n.pos, outFace), layout.halfW, refLat))
+    srcTrunkPairs.set(nid, offsetCurve(straightLine(n.pos, outFace), layout.halfW, refLat, n.bearing, n.bearing))
   }
 
   // (Node-boundary alignment removed — was experimental, degraded multi-poly)
