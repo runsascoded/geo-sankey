@@ -57,6 +57,7 @@ export default function FerryTest() {
   const [showGraph, setShowGraph] = useUrlState('graph', boolParam)
   const [bezierN, setBezierN] = useUrlState('bn', numParam(20))
   const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(0.5))
+  const [creaseSkip, setCreaseSkip] = useUrlState('cs', numParam(1))
 
   const graphOpts: FlowGraphOpts = {
     refLat: 40.740,
@@ -67,13 +68,14 @@ export default function FerryTest() {
     arrowLen,
     bezierN: Math.round(bezierN),
     nodeApproach,
+    creaseSkip: Math.round(creaseSkip),
   }
 
   const geojson = useMemo(() =>
     singlePoly
       ? renderFlowGraphSinglePoly(graph, graphOpts)
       : renderFlowGraph(graph, graphOpts),
-  [llz.zoom, singlePoly, arrowWing, arrowLen, bezierN, nodeApproach])
+  [llz.zoom, singlePoly, arrowWing, arrowLen, bezierN, nodeApproach, creaseSkip])
 
   const nodePoints = useMemo(() => ({
     type: 'FeatureCollection' as const,
@@ -181,6 +183,12 @@ export default function FerryTest() {
           <input type="range" min="0" max="3" step="0.1" value={nodeApproach}
             onChange={e => setNodeApproach(parseFloat(e.target.value))} style={{ width: 80 }} />
           <span style={{ fontSize: 11, minWidth: 24 }}>{nodeApproach.toFixed(1)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 12 }}>Crease:</label>
+          <input type="range" min="0" max="4" step="1" value={creaseSkip}
+            onChange={e => setCreaseSkip(parseFloat(e.target.value))} style={{ width: 80 }} />
+          <span style={{ fontSize: 11, minWidth: 24 }}>{Math.round(creaseSkip)}</span>
         </div>
       </div>
       <div className="map-container">

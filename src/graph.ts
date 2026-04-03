@@ -43,6 +43,31 @@ export interface FlowGraphOpts {
   plugFraction?: number     // distance convergence for crevice plugging, default 0.3
   bezierN?: number          // bezier sample count per edge (default 20, 1=straight)
   nodeApproach?: number     // through-node approach zone as multiple of halfW (default 0.5)
+  creaseSkip?: number       // points to skip at merge/split crease (default 1)
+}
+
+/** Remove near-collinear points from a ring. If the angle at a point
+ *  deviates less than `epsDeg` from straight (180°), remove it. */
+function simplifyRing(ring: [number, number][], epsDeg = 1): [number, number][] {
+  if (ring.length < 3) return ring
+  const epsRad = epsDeg * Math.PI / 180
+  const cosEps = Math.cos(epsRad) // cos(1°) ≈ 0.9998
+  const out: [number, number][] = [ring[0]]
+  for (let i = 1; i < ring.length - 1; i++) {
+    const [ax, ay] = ring[i - 1], [bx, by] = ring[i], [cx, cy] = ring[i + 1]
+    const d1x = bx - ax, d1y = by - ay
+    const d2x = cx - bx, d2y = cy - by
+    const len1 = Math.sqrt(d1x * d1x + d1y * d1y)
+    const len2 = Math.sqrt(d2x * d2x + d2y * d2y)
+    if (len1 > 0 && len2 > 0) {
+      const dot = (d1x * d2x + d1y * d2y) / (len1 * len2)
+      if (dot < cosEps) { // angle deviates enough — keep
+        out.push(ring[i])
+      }
+    }
+  }
+  out.push(ring[ring.length - 1])
+  return out
 }
 
 // --- Internal types ---
@@ -555,7 +580,7 @@ export function renderFlowGraphSinglePoly(
   const {
     refLat, zoom, geoScale = 1, pxPerWeight, color,
     arrowWing = 1.6, arrowLen = 1.3, minArrowWingPx = 0,
-    plugBearingDeg = 1, plugFraction = 0.3,
+    plugBearingDeg = 1, plugFraction = 0.3, creaseSkip = 1,
     bezierN = 20,
   } = opts
   const layouts = computeLayout(graph, opts, true) // align slots to through-width
@@ -718,55 +743,109 @@ export function renderFlowGraphSinglePoly(
     //   low index = RIGHT of bearing (south for ~east bearing)
     //   high index = LEFT of bearing (north for ~east bearing)
 
+    /** Find how many points to skip at a crease by detecting where two
+     *  inner edges converge (distance < threshold). Walk backward from
+     *  the merge face end of both edges. */
+    function creaseConvergence(
+      edgeA: [number, number][], edgeB: [number, number][],
+      threshold: number,
+    ): number {
+      const nA = edgeA.length, nB = edgeB.length
+      let skip = 0
+      for (let k = 0; k < Math.min(nA, nB); k++) {
+        const a = edgeA[nA - 1 - k], b = edgeB[nB - 1 - k]
+        const dLon = (a[0] - b[0]) * ls, dLat = (a[1] - b[1]) * ls
+        if (dLon * dLon + dLat * dLat > threshold * threshold) break
+        skip = k + 1
+      }
+      return Math.max(skip, creaseSkip)
+    }
+
+    const hasNorthIns = mainIdx >= 0 && mainIdx < ins.length - 1
+    const hasSouthIns = mainIdx > 0
+
+    // Pop main input face points at north crease
+    if (hasNorthIns) {
+      const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
+      const sideEp = edgePairs.get(eid(ins[mainIdx + 1]))
+      const skip = mainEp && sideEp
+        ? creaseConvergence(mainEp.left, sideEp.right, layout.halfW * 0.5)
+        : creaseSkip
+      for (let k = 0; k < skip && ring.length > 0; k++) ring.pop()
+    }
+
     // LEFT/north side inputs (indices > mainIdx, innermost first)
-    // From the main input's top edge, exit along the side input's INNER
-    // (bottom/right) edge, around source, back along OUTER (top/left) edge.
     if (mainIdx >= 0) {
       for (let i = mainIdx + 1; i < ins.length; i++) {
         const sideEdge = ins[i]
         const ep = edgePairs.get(eid(sideEdge))!
-        // Inner edge (RIGHT = bottom of north arm), trace backward (merge→source)
-        ring.push(...[...ep.right].reverse())
+        // Detect convergence between this inner edge and the output/main edge
+        const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
+        const skip = mainEp
+          ? creaseConvergence(mainEp.left, ep.right, layout.halfW * 0.5)
+          : creaseSkip
+        const rRev = [...ep.right].reverse()
+        ring.push(...rRev.slice(skip))
         const srcL = layouts.get(sideEdge.from)!
         if (srcL.isSource) {
           tracedSources.add(sideEdge.from)
           const tp = srcTrunkPairs.get(sideEdge.from)
           if (tp) { ring.push(...[...tp.right].reverse()); ring.push(...tp.left) }
         }
-        // Outer edge (LEFT = top of north arm), trace forward (source→merge)
-        ring.push(...ep.left)
+        ring.push(...(skip > 0 ? ep.left.slice(0, -skip) : ep.left))
       }
     }
 
     // --- Forward: trace each output branch ---
-    // Iterate from northmost (highest perpProjection = last in sorted)
-    // to southmost, so the first output's LEFT continues the input's
-    // top edge, and the last output's RIGHT continues the input's bottom.
-    for (let i = outs.length - 1; i >= 0; i--) {
-      const outEdge = outs[i]
+    // Iterate from northmost to southmost. At crease transitions between
+    // outputs, skip face endpoints to prevent seams.
+    const outsList: GFlowEdge[] = []
+    for (let i = outs.length - 1; i >= 0; i--) outsList.push(outs[i])
+    const hasNorthInputs = mainIdx >= 0 && mainIdx < ins.length - 1
+    const hasSouthInputs = mainIdx > 0
+    for (let i = 0; i < outsList.length; i++) {
+      const outEdge = outsList[i]
       const ep = edgePairs.get(eid(outEdge))!
-      ring.push(...ep.left)
+      // Skip face endpoints at crease transitions — no midpoints needed,
+      // the polygon connects directly between the second-to-last points.
+      const skipLeft0 = i > 0 || hasNorthInputs
+      const skipRight0 = i < outsList.length - 1 || hasSouthInputs
+      // Skip left[n-1] at dest merge crease (traceBranch pops it if needed)
+      ring.push(...(skipLeft0 ? ep.left.slice(creaseSkip) : ep.left))
       traceBranch(outEdge.to, eid(outEdge), ring)
-      ring.push(...[...ep.right].reverse())
+      // Skip right[n-1] at dest merge crease (south-side inputs)
+      const dstLayout = layouts.get(outEdge.to)!
+      const dstIns = sortedIns(outEdge.to)
+      const dstMainIdx = dstIns.findIndex(e => eid(e) === eid(outEdge))
+      const dstHasSouthInputs = dstMainIdx > 0
+      const rRev = [...ep.right].reverse()
+      const skipRightFirst = dstHasSouthInputs // skip right[n-1] at dest face
+      const cs = creaseSkip
+      let rSlice = rRev
+      if (skipRightFirst && cs > 0) rSlice = rSlice.slice(cs)
+      if (skipRight0 && cs > 0) rSlice = rSlice.slice(0, -cs)
+      ring.push(...rSlice)
     }
 
     // RIGHT/south side inputs (indices < mainIdx, innermost first)
-    // From the output's bottom edge, exit along the side input's OUTER
-    // (bottom/right) edge, around source, back along INNER (top/left) edge.
     if (mainIdx >= 0) {
       for (let i = mainIdx - 1; i >= 0; i--) {
         const sideEdge = ins[i]
         const ep = edgePairs.get(eid(sideEdge))!
-        // Outer edge (RIGHT = bottom of south arm), trace backward (merge→source)
-        ring.push(...[...ep.right].reverse())
+        // Detect convergence between this inner edge and the main input
+        const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
+        const skip = mainEp
+          ? creaseConvergence(mainEp.right, ep.left, layout.halfW * 0.5)
+          : creaseSkip
+        const rRev = [...ep.right].reverse()
+        ring.push(...rRev.slice(skip))
         const srcL = layouts.get(sideEdge.from)!
         if (srcL.isSource) {
           tracedSources.add(sideEdge.from)
           const tp = srcTrunkPairs.get(sideEdge.from)
           if (tp) { ring.push(...[...tp.right].reverse()); ring.push(...tp.left) }
         }
-        // Inner edge (LEFT = top of south arm), trace forward (source→merge)
-        ring.push(...ep.left)
+        ring.push(...(skip > 0 ? ep.left.slice(0, -skip) : ep.left))
       }
     }
 
@@ -791,9 +870,10 @@ export function renderFlowGraphSinglePoly(
     const destIns = sortedIns(outs[0].to)
     if (destIns.length > 0 && eid(destIns[0]) !== eid(outs[0])) continue
 
-    const ring: [number, number][] = []
+    let ring: [number, number][] = []
     traceBranch(nid, null, ring)
     if (ring.length > 0) {
+      ring = simplifyRing(ring)
       ring.push(ring[0])
       const w = pxW(pxPerWeight, layouts.get(nid)!.throughWeight)
       features.push(ringFeature(ring, { color, width: w, key: `sp-${nid}`, opacity: 1 }))
