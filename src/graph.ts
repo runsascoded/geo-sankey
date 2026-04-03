@@ -46,25 +46,20 @@ export interface FlowGraphOpts {
   creaseSkip?: number       // points to skip at merge/split crease (default 1)
 }
 
-/** Remove near-collinear points from a ring. If the angle at a point
- *  deviates less than `epsDeg` from straight (180°), remove it. */
-function simplifyRing(ring: [number, number][], epsDeg = 1): [number, number][] {
+/** Remove redundant points from a ring using perpendicular distance.
+ *  A point is redundant if it's within `eps` degrees of the line between
+ *  its neighbors (Douglas-Peucker style, single pass). */
+function simplifyRing(ring: [number, number][], eps = 0.000001): [number, number][] {
   if (ring.length < 3) return ring
-  const epsRad = epsDeg * Math.PI / 180
-  const cosEps = Math.cos(epsRad) // cos(1°) ≈ 0.9998
   const out: [number, number][] = [ring[0]]
   for (let i = 1; i < ring.length - 1; i++) {
     const [ax, ay] = ring[i - 1], [bx, by] = ring[i], [cx, cy] = ring[i + 1]
-    const d1x = bx - ax, d1y = by - ay
-    const d2x = cx - bx, d2y = cy - by
-    const len1 = Math.sqrt(d1x * d1x + d1y * d1y)
-    const len2 = Math.sqrt(d2x * d2x + d2y * d2y)
-    if (len1 > 0 && len2 > 0) {
-      const dot = (d1x * d2x + d1y * d2y) / (len1 * len2)
-      if (dot < cosEps) { // angle deviates enough — keep
-        out.push(ring[i])
-      }
-    }
+    // Perpendicular distance from B to line A→C
+    const dx = cx - ax, dy = cy - ay
+    const len = Math.sqrt(dx * dx + dy * dy)
+    if (len === 0) continue
+    const dist = Math.abs((bx - ax) * dy - (by - ay) * dx) / len
+    if (dist > eps) out.push(ring[i])
   }
   out.push(ring[ring.length - 1])
   return out
@@ -147,10 +142,8 @@ function offsetCurve(
     let pLon: number, pLat: number
 
     if (i === 0) {
-      // First point: use first segment's perpendicular
       pLon = segPerps[0].pLon; pLat = segPerps[0].pLat
     } else if (i === n - 1) {
-      // Last point: use last segment's perpendicular
       pLon = segPerps[n - 2].pLon; pLat = segPerps[n - 2].pLat
     } else {
       // Interior: miter join between segments i-1 and i

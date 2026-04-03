@@ -86,10 +86,10 @@ export function directedBezier(
 
   const scaled = cubicBezier(sStart, cp1, cp2, sEnd, n)
 
-  // Replace second and second-to-last points with full-length straight
-  // segments along the exact bearings. Full-length (not half) so the
-  // tangent averaging at index 1 and n-2 gives equal weight to the
-  // endpoint bearing and the interior curve, preventing ribbon pinch.
+  // Replace second and second-to-last bezier points with positions along
+  // the exact bearing. The segment from this forced point to the endpoint
+  // is at exact bearing, ensuring the offset curve perpendicular there
+  // matches the node's bearing for seamless crease plugging.
   if (scaled.length >= 4) {
     const seg0Lat = scaled[1][0] - scaled[0][0]
     const seg0Lon = scaled[1][1] - scaled[0][1]
