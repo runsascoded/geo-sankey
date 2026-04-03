@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, createContext, useContext } from 'react'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
-import { HotkeysProvider, useHotkeys, SpeedDial } from 'use-kbd'
+import { HotkeysProvider, useActions, SpeedDial, Omnibar, LookupModal, ShortcutsModal } from 'use-kbd'
+import 'use-kbd/styles.css'
 import MultiTreeMerge from './examples/MultiTreeMerge'
 import ParallelRibbons from './examples/ParallelRibbons'
 import SeamTest from './examples/SeamTest'
@@ -57,13 +58,13 @@ function AppInner() {
   const Example = examples.find(e => e.id === active)!.component
   const { toggle: toggleTheme } = useTheme()
 
-  const keymap: Record<string, string> = { toggleTheme: 'd' }
-  const handlers: Record<string, () => void> = { toggleTheme }
-  for (const e of examples) {
-    keymap[e.id] = e.key
-    handlers[e.id] = () => setActive(e.id)
+  const actions: Record<string, { label: string; group?: string; defaultBindings: string[]; handler: () => void }> = {
+    toggleTheme: { label: 'Toggle theme', group: 'View', defaultBindings: ['d'], handler: toggleTheme },
   }
-  useHotkeys(keymap, handlers)
+  for (const e of examples) {
+    actions[e.id] = { label: e.label, group: 'Examples', defaultBindings: [e.key], handler: () => setActive(e.id) }
+  }
+  useActions(actions)
 
   return (
     <div className="app">
@@ -95,6 +96,9 @@ function AppInner() {
           },
         ]}
       />
+      <Omnibar />
+      <LookupModal />
+      <ShortcutsModal />
     </div>
   )
 }

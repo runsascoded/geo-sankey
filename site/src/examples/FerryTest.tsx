@@ -2,6 +2,7 @@ import { useMemo, useCallback } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
+import { useActions } from 'use-kbd'
 import { renderFlowGraph, renderFlowGraphSinglePoly } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import { useLLZ } from '../llz'
@@ -28,12 +29,16 @@ const graph: FlowGraph = {
 }
 
 const boolParam: Param<boolean> = {
-  encode: (v) => v ? '1' : undefined,
-  decode: (s) => s === '1',
+  encode: (v) => v ? '' : undefined,
+  decode: (s) => s != null,
 }
 const numParam = (def: number): Param<number> => ({
-  encode: (v) => v === def ? undefined : v.toFixed(2),
-  decode: (s) => s ? parseFloat(s) || def : def,
+  encode: (v) => v === def ? undefined : String(v),
+  decode: (s) => { const n = parseFloat(s ?? ''); return isNaN(n) ? def : n },
+})
+const intParam = (def: number): Param<number> => ({
+  encode: (v) => v === def ? undefined : String(v),
+  decode: (s) => { const n = parseInt(s ?? '', 10); return isNaN(n) ? def : n },
 })
 
 const DEFAULTS = { lat: 40.735, lng: -74.030, zoom: 13 }
@@ -47,8 +52,21 @@ export default function FerryTest() {
   const [arrowLen, setArrowLen] = useUrlState('al', numParam(1.3))
   const [opacity, setOpacity] = useUrlState('o', numParam(0.5))
   const [showGraph, setShowGraph] = useUrlState('graph', boolParam)
-  const [bezierN, setBezierN] = useUrlState('bn', numParam(20))
+  const [bezierN, setBezierN] = useUrlState('bn', intParam(20))
   const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(0.5))
+
+  useActions({
+    toggleSinglePoly: { label: 'Toggle single-poly', group: 'Config', defaultBindings: ['s'], handler: () => setSinglePoly(!singlePoly) },
+    toggleRingPoints: { label: 'Toggle ring points', group: 'Config', defaultBindings: ['r'], handler: () => setShowRing(!showRing) },
+    toggleNodes: { label: 'Toggle nodes', group: 'Config', defaultBindings: ['n'], handler: () => setShowNodes(!showNodes) },
+    toggleGraph: { label: 'Toggle graph overlay', group: 'Config', defaultBindings: ['g'], handler: () => setShowGraph(!showGraph) },
+    opacityUp: { label: 'Increase opacity', group: 'Config', defaultBindings: ['shift+up'], handler: () => setOpacity(Math.min(1, opacity + 0.1)) },
+    opacityDown: { label: 'Decrease opacity', group: 'Config', defaultBindings: ['shift+down'], handler: () => setOpacity(Math.max(0.1, opacity - 0.1)) },
+    bplUp: { label: 'Increase BPL', group: 'Config', defaultBindings: ['b'], handler: () => setBezierN(Math.min(40, bezierN + 2)) },
+    bplDown: { label: 'Decrease BPL', group: 'Config', defaultBindings: ['shift+b'], handler: () => setBezierN(Math.max(1, bezierN - 2)) },
+    approachUp: { label: 'Increase approach', group: 'Config', defaultBindings: ['a'], handler: () => setNodeApproach(Math.min(3, nodeApproach + 0.1)) },
+    approachDown: { label: 'Decrease approach', group: 'Config', defaultBindings: ['shift+a'], handler: () => setNodeApproach(Math.max(0, nodeApproach - 0.1)) },
+  })
 
   const graphOpts: FlowGraphOpts = {
     refLat: 40.735,
@@ -57,7 +75,7 @@ export default function FerryTest() {
     pxPerWeight: 0.3,
     arrowWing,
     arrowLen,
-    bezierN: Math.round(bezierN),
+    bezierN: bezierN,
     nodeApproach,
   }
 
@@ -176,7 +194,7 @@ export default function FerryTest() {
           <label style={{ fontSize: 12 }}>BPL:</label>
           <input type="range" min="1" max="40" step="1" value={bezierN}
             onChange={e => setBezierN(parseFloat(e.target.value))} style={{ width: 80 }} />
-          <span style={{ fontSize: 11, minWidth: 24 }}>{Math.round(bezierN)}</span>
+          <span style={{ fontSize: 11, minWidth: 24 }}>{bezierN}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <label style={{ fontSize: 12 }}>Approach:</label>

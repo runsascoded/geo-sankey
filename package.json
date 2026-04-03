@@ -21,6 +21,6 @@
     "vitest": "^4.1.0"
   },
   "dependencies": {
-    "use-kbd": "^0.12.0"
+    "use-kbd": "https://github.com/runsascoded/use-kbd#e8de7954c2d39b639dc1b99203659b91fd8fd269"
   }
 }

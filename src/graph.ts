@@ -751,7 +751,7 @@ export function renderFlowGraphSinglePoly(
         if (dLon * dLon + dLat * dLat > threshold * threshold) break
         skip = k + 1
       }
-      return Math.max(skip, creaseSkip)
+      return creaseSkip === 0 ? 0 : Math.max(skip, creaseSkip)
     }
 
     const hasNorthIns = mainIdx >= 0 && mainIdx < ins.length - 1
