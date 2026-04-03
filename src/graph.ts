@@ -103,25 +103,49 @@ function offsetCurve(
   const left: [number, number][] = []
   const right: [number, number][] = []
 
-  for (let i = 0; i < n; i++) {
-    // Compute tangent in Mercator screen space (x=lon, y=lat*ls).
-    // Scale dLat by ls so perpendiculars match screen angles.
-    let dy = 0, dx = 0
-    if (i < n - 1) {
-      dy += (path[i + 1][0] - path[i][0]) * ls          // dLat * ls (screen y)
-      dx += path[i + 1][1] - path[i][1]                  // dLon (screen x)
+  // Compute per-segment perpendiculars in Mercator screen space
+  const segPerps: { pLon: number; pLat: number }[] = []
+  for (let i = 0; i < n - 1; i++) {
+    const dy = (path[i + 1][0] - path[i][0]) * ls
+    const dx = path[i + 1][1] - path[i][1]
+    const len = Math.sqrt(dx * dx + dy * dy)
+    if (len > 0) {
+      segPerps.push({ pLon: -dy / len, pLat: dx / len })
+    } else {
+      segPerps.push({ pLon: 0, pLat: 0 })
     }
-    if (i > 0) {
-      dy += (path[i][0] - path[i - 1][0]) * ls
-      dx += path[i][1] - path[i - 1][1]
-    }
-    // Perpendicular in screen space: rotate 90° CCW → (-dy, dx)
-    let pLon = -dy, pLat = dx
-    const len = Math.sqrt(pLat * pLat + pLon * pLon)
-    if (len > 0) { pLat /= len; pLon /= len }
+  }
 
-    // Apply offset: pLon is in screen-x (= lon degrees), pLat is in
-    // screen-y units, convert back to lat by dividing by ls
+  // Miter join: at each vertex, compute the offset that makes adjacent
+  // segments' left/right edges exactly parallel to their center segments.
+  for (let i = 0; i < n; i++) {
+    let pLon: number, pLat: number
+
+    if (i === 0) {
+      // First point: use first segment's perpendicular
+      pLon = segPerps[0].pLon; pLat = segPerps[0].pLat
+    } else if (i === n - 1) {
+      // Last point: use last segment's perpendicular
+      pLon = segPerps[n - 2].pLon; pLat = segPerps[n - 2].pLat
+    } else {
+      // Interior: miter join between segments i-1 and i
+      const n1 = segPerps[i - 1], n2 = segPerps[i]
+      // Miter direction = average of the two perpendiculars, normalized
+      const mLon = n1.pLon + n2.pLon, mLat = n1.pLat + n2.pLat
+      const mLen = Math.sqrt(mLon * mLon + mLat * mLat)
+      if (mLen > 0.001) {
+        const mLonN = mLon / mLen, mLatN = mLat / mLen
+        // Miter scale = 1 / dot(miter_dir, segment_perp)
+        const dot = mLonN * n1.pLon + mLatN * n1.pLat
+        const scale = Math.min(1 / Math.max(dot, 0.01), 2) // miter, capped at 2x to prevent spikes
+        pLon = mLonN * scale; pLat = mLatN * scale
+      } else {
+        pLon = n1.pLon; pLat = n1.pLat
+      }
+    }
+
+    // Apply offset: pLon is screen-x (lon degrees), pLat is screen-y,
+    // convert back to lat by dividing by ls
     left.push([path[i][1] + pLon * halfW, path[i][0] + pLat * halfW / ls])
     right.push([path[i][1] - pLon * halfW, path[i][0] - pLat * halfW / ls])
   }

@@ -86,21 +86,21 @@ export function directedBezier(
 
   const scaled = cubicBezier(sStart, cp1, cp2, sEnd, n)
 
-  // Replace second and second-to-last points with half-length straight
-  // segments along the exact bearings, guaranteeing perpendiculars match.
+  // Replace second and second-to-last points with full-length straight
+  // segments along the exact bearings. Full-length (not half) so the
+  // tangent averaging at index 1 and n-2 gives equal weight to the
+  // endpoint bearing and the interior curve, preventing ribbon pinch.
   if (scaled.length >= 4) {
     const seg0Lat = scaled[1][0] - scaled[0][0]
     const seg0Lon = scaled[1][1] - scaled[0][1]
     const seg0Len = sqrt(seg0Lat * seg0Lat + seg0Lon * seg0Lon)
-    const half0 = seg0Len / 2
-    scaled[1] = [sStart[0] + cos(dRad) * half0, sStart[1] + sin(dRad) * half0]
+    scaled[1] = [sStart[0] + cos(dRad) * seg0Len, sStart[1] + sin(dRad) * seg0Len]
 
     const last = scaled.length - 1
     const segNLat = scaled[last][0] - scaled[last - 1][0]
     const segNLon = scaled[last][1] - scaled[last - 1][1]
     const segNLen = sqrt(segNLat * segNLat + segNLon * segNLon)
-    const halfN = segNLen / 2
-    scaled[last - 1] = [sEnd[0] - cos(aRad) * halfN, sEnd[1] - sin(aRad) * halfN]
+    scaled[last - 1] = [sEnd[0] - cos(aRad) * segNLen, sEnd[1] - sin(aRad) * segNLen]
   }
 
   // Unscale lat back from screen space
