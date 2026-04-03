@@ -31,6 +31,7 @@ function findSelfIntersection(ring: [number, number][]): number {
     for (let j = i + 2; j < n; j++) {
       if (i === 0 && j === n - 1) continue // skip adjacent start/end
       if (segmentsIntersect(ring[i], ring[i + 1], ring[j], ring[j + 1])) {
+        console.log(`  crossing: seg[${i}→${i+1}] × seg[${j}→${j+1}]`)
         return i
       }
     }
@@ -111,16 +112,16 @@ const ferryGraph: FlowGraph = {
 
 const hbtFerry: FlowGraph = {
   nodes: [
-    { id: 'hob-so', pos: [40.7359, -74.0275], bearing: 90 },
-    { id: 'hob-14', pos: [40.7505, -74.0241], bearing: 90 },
-    { id: 'whk', pos: [40.7771, -74.0136], bearing: 130 },
-    { id: 'ph', pos: [40.7138, -74.0337], bearing: 60 },
-    { id: 'hob-split', pos: [40.7359, -74.0200], bearing: 90 },
-    { id: 'ut-merge', pos: [40.7500, -74.0180], bearing: 30 },
-    { id: 'dt-merge', pos: [40.7142, -74.0210], bearing: 90 },
-    { id: 'mt-merge', pos: [40.7580, -74.0080], bearing: 110 },
-    { id: 'mt39', pos: [40.7555, -74.0060], bearing: 110 },
-    { id: 'bpt', pos: [40.7142, -74.0169], bearing: 90 },
+    { id: 'hob-so', pos: [40.735, -74.050], bearing: 90 },
+    { id: 'hob-14', pos: [40.755, -74.040], bearing: 90 },
+    { id: 'whk', pos: [40.780, -74.025], bearing: 130 },
+    { id: 'ph', pos: [40.705, -74.045], bearing: 60 },
+    { id: 'hob-split', pos: [40.735, -74.035], bearing: 90 },
+    { id: 'ut-merge', pos: [40.755, -74.025], bearing: 30 },
+    { id: 'dt-merge', pos: [40.705, -74.030], bearing: 90 },
+    { id: 'mt-merge', pos: [40.762, -74.005], bearing: 110 },
+    { id: 'mt39', pos: [40.760, 73.990], bearing: 110 },
+    { id: 'bpt', pos: [40.705, -74.015], bearing: 90 },
   ],
   edges: [
     { from: 'hob-so', to: 'hob-split', weight: 30 },

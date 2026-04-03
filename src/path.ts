@@ -60,26 +60,51 @@ export function directedBezier(
   end: LatLon,
   departBearing?: number,
   arriveBearing?: number,
+  n = 20,
+  lngScaleFactor = 1,
 ): LatLon[] {
-  const dLat = end[0] - start[0], dLon = end[1] - start[1]
+  // Work in Mercator-like screen space (lon, lat*ls) where angles
+  // are preserved. Scale lat by ls so index 0 = lat*ls ≈ screen y.
+  const ls = lngScaleFactor
+  const sStart: LatLon = [start[0] * ls, start[1]]
+  const sEnd: LatLon = [end[0] * ls, end[1]]
+
+  const dLat = sEnd[0] - sStart[0], dLon = sEnd[1] - sStart[1]
   const dist = sqrt(dLat * dLat + dLon * dLon)
 
-  // Scale control point distance based on alignment between bearing and
-  // actual start→end direction. When bearings conflict with the path
-  // direction, use shorter control arms to prevent loops.
   const pathAngle = Math.atan2(dLon, dLat) * 180 / PI
 
   const dRad = (departBearing ?? 90) * PI / 180
   const dDiff = Math.abs(((((departBearing ?? 90) - pathAngle) % 360) + 540) % 360 - 180)
   const dSpan = max(dist * (dDiff < 90 ? 0.4 : 0.2), 0.001)
-  const cp1: LatLon = [start[0] + cos(dRad) * dSpan, start[1] + sin(dRad) * dSpan]
+  const cp1: LatLon = [sStart[0] + cos(dRad) * dSpan, sStart[1] + sin(dRad) * dSpan]
 
   const aRad = (arriveBearing ?? 90) * PI / 180
   const aDiff = Math.abs(((((arriveBearing ?? 90) - pathAngle) % 360) + 540) % 360 - 180)
   const aSpan = max(dist * (aDiff < 90 ? 0.4 : 0.2), 0.001)
-  const cp2: LatLon = [end[0] - cos(aRad) * aSpan, end[1] - sin(aRad) * aSpan]
+  const cp2: LatLon = [sEnd[0] - cos(aRad) * aSpan, sEnd[1] - sin(aRad) * aSpan]
 
-  return cubicBezier(start, cp1, cp2, end)
+  const scaled = cubicBezier(sStart, cp1, cp2, sEnd, n)
+
+  // Replace second and second-to-last points with half-length straight
+  // segments along the exact bearings, guaranteeing perpendiculars match.
+  if (scaled.length >= 4) {
+    const seg0Lat = scaled[1][0] - scaled[0][0]
+    const seg0Lon = scaled[1][1] - scaled[0][1]
+    const seg0Len = sqrt(seg0Lat * seg0Lat + seg0Lon * seg0Lon)
+    const half0 = seg0Len / 2
+    scaled[1] = [sStart[0] + cos(dRad) * half0, sStart[1] + sin(dRad) * half0]
+
+    const last = scaled.length - 1
+    const segNLat = scaled[last][0] - scaled[last - 1][0]
+    const segNLon = scaled[last][1] - scaled[last - 1][1]
+    const segNLen = sqrt(segNLat * segNLat + segNLon * segNLon)
+    const halfN = segNLen / 2
+    scaled[last - 1] = [sEnd[0] - cos(aRad) * halfN, sEnd[1] - sin(aRad) * halfN]
+  }
+
+  // Unscale lat back from screen space
+  return scaled.map(p => [p[0] / ls, p[1]] as LatLon)
 }
 
 /** Perpendicular unit vector at waypoint i (in lat/lng space, not scaled). */

@@ -46,6 +46,9 @@ export default function FerryTest() {
   const [arrowWing, setArrowWing] = useUrlState('aw', numParam(1.6))
   const [arrowLen, setArrowLen] = useUrlState('al', numParam(1.3))
   const [opacity, setOpacity] = useUrlState('o', numParam(0.5))
+  const [showGraph, setShowGraph] = useUrlState('graph', boolParam)
+  const [bezierN, setBezierN] = useUrlState('bn', numParam(20))
+  const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(0.5))
 
   const graphOpts: FlowGraphOpts = {
     refLat: 40.735,
@@ -54,13 +57,15 @@ export default function FerryTest() {
     pxPerWeight: 0.3,
     arrowWing,
     arrowLen,
+    bezierN: Math.round(bezierN),
+    nodeApproach,
   }
 
   const geojson = useMemo(() =>
     singlePoly
       ? renderFlowGraphSinglePoly(graph, graphOpts)
       : renderFlowGraph(graph, graphOpts),
-  [llz.zoom, singlePoly, arrowWing, arrowLen])
+  [llz.zoom, singlePoly, arrowWing, arrowLen, bezierN, nodeApproach])
 
   const nodePoints = useMemo(() => ({
     type: 'FeatureCollection' as const,
@@ -69,6 +74,41 @@ export default function FerryTest() {
       properties: { id: n.id, label: n.label ?? n.id, bearing: n.bearing },
       geometry: { type: 'Point' as const, coordinates: [n.pos[1], n.pos[0]] },
     })),
+  }), [])
+
+  // Raw directed graph: edges as lines, nodes as points with labels
+  const graphEdges = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: graph.edges.map(e => {
+      const src = graph.nodes.find(n => n.id === e.from)!
+      const dst = graph.nodes.find(n => n.id === e.to)!
+      const midLon = (src.pos[1] + dst.pos[1]) / 2
+      const midLat = (src.pos[0] + dst.pos[0]) / 2
+      return {
+        type: 'Feature' as const,
+        properties: { weight: e.weight, label: `${e.weight}` },
+        geometry: {
+          type: 'LineString' as const,
+          coordinates: [[src.pos[1], src.pos[0]], [dst.pos[1], dst.pos[0]]],
+        },
+      }
+    }),
+  }), [])
+
+  const graphEdgeMidpoints = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: graph.edges.map(e => {
+      const src = graph.nodes.find(n => n.id === e.from)!
+      const dst = graph.nodes.find(n => n.id === e.to)!
+      return {
+        type: 'Feature' as const,
+        properties: { label: `${e.weight}` },
+        geometry: {
+          type: 'Point' as const,
+          coordinates: [(src.pos[1] + dst.pos[1]) / 2, (src.pos[0] + dst.pos[0]) / 2],
+        },
+      }
+    }),
   }), [])
 
   const ringPoints = useMemo(() => {
@@ -110,6 +150,10 @@ export default function FerryTest() {
           <input type="checkbox" checked={showNodes} onChange={e => setShowNodes(e.target.checked)} />
           {' '}Nodes
         </label>
+        <label style={{ fontSize: 12 }}>
+          <input type="checkbox" checked={showGraph} onChange={e => setShowGraph(e.target.checked)} />
+          {' '}Graph
+        </label>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <label style={{ fontSize: 12 }}>Opacity:</label>
           <input type="range" min="0.1" max="1" step="0.05" value={opacity}
@@ -123,10 +167,22 @@ export default function FerryTest() {
           <span style={{ fontSize: 11, minWidth: 24 }}>{arrowWing.toFixed(1)}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <label style={{ fontSize: 12 }}>Length:</label>
+          <label style={{ fontSize: 12 }}>ArrowLen:</label>
           <input type="range" min="0.5" max="4" step="0.1" value={arrowLen}
             onChange={e => setArrowLen(parseFloat(e.target.value))} style={{ width: 80 }} />
           <span style={{ fontSize: 11, minWidth: 24 }}>{arrowLen.toFixed(1)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 12 }}>BPL:</label>
+          <input type="range" min="1" max="40" step="1" value={bezierN}
+            onChange={e => setBezierN(parseFloat(e.target.value))} style={{ width: 80 }} />
+          <span style={{ fontSize: 11, minWidth: 24 }}>{Math.round(bezierN)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 12 }}>Approach:</label>
+          <input type="range" min="0" max="3" step="0.1" value={nodeApproach}
+            onChange={e => setNodeApproach(parseFloat(e.target.value))} style={{ width: 80 }} />
+          <span style={{ fontSize: 11, minWidth: 24 }}>{nodeApproach.toFixed(1)}</span>
         </div>
       </div>
       <div className="map-container">
@@ -170,6 +226,30 @@ export default function FerryTest() {
                 id="ring-circles"
                 type="circle"
                 paint={{ 'circle-radius': 4, 'circle-color': '#f59e0b', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 }}
+              />
+            </Source>
+          )}
+          {showGraph && (
+            <Source id="graph-edges" type="geojson" data={graphEdges}>
+              <Layer
+                id="graph-edge-lines"
+                type="line"
+                paint={{ 'line-color': '#ef4444', 'line-width': ['get', 'weight'], 'line-opacity': 0.5 }}
+              />
+            </Source>
+          )}
+          {showGraph && (
+            <Source id="graph-edge-labels" type="geojson" data={graphEdgeMidpoints}>
+              <Layer
+                id="graph-weight-labels"
+                type="symbol"
+                layout={{
+                  'text-field': ['get', 'label'],
+                  'text-size': 16,
+                  'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+                  'text-allow-overlap': true,
+                }}
+                paint={{ 'text-color': '#ef4444', 'text-halo-color': '#fff', 'text-halo-width': 2 }}
               />
             </Source>
           )}

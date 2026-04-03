@@ -2,7 +2,7 @@ import { useMemo, useCallback } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
-import { renderFlowGraph, renderFlowGraphSinglePoly } from 'geo-sankey'
+import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import { useLLZ } from '../llz'
 import { useTheme, MAP_STYLES } from '../App'
@@ -11,16 +11,16 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 // Full HBT ferry layout
 const graph: FlowGraph = {
   nodes: [
-    { id: 'hob-so',    pos: [40.7359, -74.0275], bearing: 90, label: 'Hob So' },
-    { id: 'hob-14',    pos: [40.7505, -74.0241], bearing: 90, label: 'Hob 14th' },
-    { id: 'whk',       pos: [40.7771, -74.0136], bearing: 130, label: 'Weehawken' },
-    { id: 'ph',        pos: [40.7138, -74.0337], bearing: 60, label: 'Port Hamilton' },
-    { id: 'hob-split', pos: [40.7359, -74.0230], bearing: 90 },
-    { id: 'ut-merge',  pos: [40.7530, -74.0160], bearing: 30 },
-    { id: 'dt-merge',  pos: [40.7142, -74.0210], bearing: 90 },
-    { id: 'mt-merge',  pos: [40.7565, -74.0120], bearing: 110 },
-    { id: 'mt39',      pos: [40.7555, -74.0060], bearing: 110, label: 'MT 39th St' },
-    { id: 'bpt',       pos: [40.7142, -74.0169], bearing: 90, label: 'Brookfield' },
+    { id: 'hob-so',    pos: [40.7359, -74.0320], bearing: 90, label: 'Hob So' },
+    { id: 'hob-14',    pos: [40.7520, -74.0280], bearing: 90, label: 'Hob 14th' },
+    { id: 'whk',       pos: [40.7771, -74.0160], bearing: 130, label: 'Weehawken' },
+    { id: 'ph',        pos: [40.7100, -74.0380], bearing: 60, label: 'Port Hamilton' },
+    { id: 'hob-split', pos: [40.7359, -74.0240], bearing: 90 },
+    { id: 'ut-merge',  pos: [40.7530, -74.0190], bearing: 30 },
+    { id: 'dt-merge',  pos: [40.7100, -74.0240], bearing: 90 },
+    { id: 'mt-merge',  pos: [40.7590, -74.0080], bearing: 110 },
+    { id: 'mt39',      pos: [40.7570, -73.9980], bearing: 110, label: 'MT 39th St' },
+    { id: 'bpt',       pos: [40.7100, -74.0140], bearing: 90, label: 'Brookfield' },
   ],
   edges: [
     { from: 'hob-so', to: 'hob-split', weight: 30 },
@@ -51,8 +51,12 @@ export default function FerryTest() {
   const [singlePoly, setSinglePoly] = useUrlState('sp', boolParam)
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', boolParam)
-  const [arrowWing, setArrowWing] = useUrlState('aw', numParam(2.5))
-  const [arrowLen, setArrowLen] = useUrlState('al', numParam(2.0))
+  const [arrowWing, setArrowWing] = useUrlState('aw', numParam(1.6))
+  const [arrowLen, setArrowLen] = useUrlState('al', numParam(1.3))
+  const [opacity, setOpacity] = useUrlState('o', numParam(0.5))
+  const [showGraph, setShowGraph] = useUrlState('graph', boolParam)
+  const [bezierN, setBezierN] = useUrlState('bn', numParam(20))
+  const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(0.5))
 
   const graphOpts: FlowGraphOpts = {
     refLat: 40.740,
@@ -61,13 +65,15 @@ export default function FerryTest() {
     pxPerWeight: 0.15,
     arrowWing,
     arrowLen,
+    bezierN: Math.round(bezierN),
+    nodeApproach,
   }
 
   const geojson = useMemo(() =>
     singlePoly
       ? renderFlowGraphSinglePoly(graph, graphOpts)
       : renderFlowGraph(graph, graphOpts),
-  [llz.zoom, singlePoly, arrowWing, arrowLen])
+  [llz.zoom, singlePoly, arrowWing, arrowLen, bezierN, nodeApproach])
 
   const nodePoints = useMemo(() => ({
     type: 'FeatureCollection' as const,
@@ -77,6 +83,11 @@ export default function FerryTest() {
       geometry: { type: 'Point' as const, coordinates: [n.pos[1], n.pos[0]] },
     })),
   }), [])
+
+  // Debug geometry: actual bezier center lines + approach rectangles
+  const debugGeo = useMemo(() =>
+    showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
+  [showGraph, llz.zoom, arrowWing, arrowLen, bezierN, nodeApproach])
 
   const ringPoints = useMemo(() => {
     if (!showRing || !geojson.features.length) return null
@@ -92,6 +103,26 @@ export default function FerryTest() {
       }
     }
     return { type: 'FeatureCollection' as const, features: pts }
+  }, [geojson, showRing])
+
+  // Ring edges: line segments between consecutive ring points, labeled with index
+  const ringEdges = useMemo(() => {
+    if (!showRing || !geojson.features.length) return null
+    const segs: GeoJSON.Feature[] = []
+    for (const f of geojson.features) {
+      const coords = (f.geometry as GeoJSON.Polygon).coordinates[0]
+      for (let i = 0; i < coords.length - 1; i++) {
+        segs.push({
+          type: 'Feature',
+          properties: { idx: i, label: `${i}` },
+          geometry: {
+            type: 'LineString',
+            coordinates: [coords[i], coords[i + 1]],
+          },
+        })
+      }
+    }
+    return { type: 'FeatureCollection' as const, features: segs }
   }, [geojson, showRing])
 
   const onMove = useCallback((e: { viewState: { longitude: number; latitude: number; zoom: number } }) => {
@@ -117,6 +148,16 @@ export default function FerryTest() {
           <input type="checkbox" checked={showNodes} onChange={e => setShowNodes(e.target.checked)} />
           {' '}Nodes
         </label>
+        <label style={{ fontSize: 12 }}>
+          <input type="checkbox" checked={showGraph} onChange={e => setShowGraph(e.target.checked)} />
+          {' '}Graph
+        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 12 }}>Opacity:</label>
+          <input type="range" min="0.1" max="1" step="0.05" value={opacity}
+            onChange={e => setOpacity(parseFloat(e.target.value))} style={{ width: 80 }} />
+          <span style={{ fontSize: 11, minWidth: 24 }}>{opacity.toFixed(2)}</span>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <label style={{ fontSize: 12 }}>Wing:</label>
           <input type="range" min="1" max="5" step="0.1" value={arrowWing}
@@ -124,10 +165,22 @@ export default function FerryTest() {
           <span style={{ fontSize: 11, minWidth: 24 }}>{arrowWing.toFixed(1)}</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <label style={{ fontSize: 12 }}>Length:</label>
+          <label style={{ fontSize: 12 }}>ArrowLen:</label>
           <input type="range" min="0.5" max="4" step="0.1" value={arrowLen}
             onChange={e => setArrowLen(parseFloat(e.target.value))} style={{ width: 80 }} />
           <span style={{ fontSize: 11, minWidth: 24 }}>{arrowLen.toFixed(1)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 12 }}>BPL:</label>
+          <input type="range" min="1" max="40" step="1" value={bezierN}
+            onChange={e => setBezierN(parseFloat(e.target.value))} style={{ width: 80 }} />
+          <span style={{ fontSize: 11, minWidth: 24 }}>{Math.round(bezierN)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <label style={{ fontSize: 12 }}>Approach:</label>
+          <input type="range" min="0" max="3" step="0.1" value={nodeApproach}
+            onChange={e => setNodeApproach(parseFloat(e.target.value))} style={{ width: 80 }} />
+          <span style={{ fontSize: 11, minWidth: 24 }}>{nodeApproach.toFixed(1)}</span>
         </div>
       </div>
       <div className="map-container">
@@ -141,7 +194,7 @@ export default function FerryTest() {
             <Layer
               id="flows-fill"
               type="fill"
-              paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': 0.5 }}
+              paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': opacity }}
             />
           </Source>
           {showNodes && (
@@ -165,12 +218,87 @@ export default function FerryTest() {
               />
             </Source>
           )}
+          {showRing && ringEdges && (
+            <Source id="ring-edges" type="geojson" data={ringEdges}>
+              <Layer
+                id="ring-edge-lines"
+                type="line"
+                paint={{ 'line-color': '#facc15', 'line-width': 1.5 }}
+              />
+              <Layer
+                id="ring-edge-labels"
+                type="symbol"
+                layout={{
+                  'text-field': ['get', 'label'],
+                  'text-size': 14,
+                  'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+                  'text-allow-overlap': true,
+                  'symbol-placement': 'line-center',
+                }}
+                paint={{ 'text-color': '#facc15', 'text-halo-color': '#000', 'text-halo-width': 1.5 }}
+              />
+            </Source>
+          )}
           {showRing && ringPoints && (
             <Source id="ring-pts" type="geojson" data={ringPoints}>
               <Layer
                 id="ring-circles"
                 type="circle"
                 paint={{ 'circle-radius': 4, 'circle-color': '#f59e0b', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 }}
+              />
+              <Layer
+                id="ring-pt-labels"
+                type="symbol"
+                layout={{
+                  'text-field': ['get', 'idx'],
+                  'text-size': 13,
+                  'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+                  'text-offset': [0, -1.2],
+                  'text-anchor': 'bottom',
+                  'text-allow-overlap': true,
+                }}
+                paint={{ 'text-color': '#f59e0b', 'text-halo-color': '#000', 'text-halo-width': 1 }}
+              />
+            </Source>
+          )}
+          {showGraph && debugGeo && (
+            <Source id="debug-geo" type="geojson" data={debugGeo}>
+              <Layer
+                id="debug-beziers"
+                type="line"
+                filter={['==', ['get', 'kind'], 'bezier']}
+                paint={{ 'line-color': '#ef4444', 'line-width': 2, 'line-dasharray': [4, 2] }}
+              />
+              <Layer
+                id="debug-approach"
+                type="fill"
+                filter={['in', ['get', 'kind'], ['literal', ['approach', 'arrowhead']]]}
+                paint={{ 'fill-color': '#ef4444', 'fill-opacity': 0.15 }}
+              />
+              <Layer
+                id="debug-approach-outline"
+                type="line"
+                filter={['in', ['get', 'kind'], ['literal', ['approach', 'arrowhead']]]}
+                paint={{ 'line-color': '#ef4444', 'line-width': 1, 'line-dasharray': [2, 2] }}
+              />
+              <Layer
+                id="debug-bezier-pts"
+                type="circle"
+                filter={['==', ['get', 'kind'], 'bezier-pt']}
+                paint={{ 'circle-radius': 3, 'circle-color': '#ef4444', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 }}
+              />
+              <Layer
+                id="debug-weight-labels"
+                type="symbol"
+                filter={['==', ['get', 'kind'], 'bezier']}
+                layout={{
+                  'text-field': ['get', 'weight'],
+                  'text-size': 16,
+                  'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+                  'text-allow-overlap': true,
+                  'symbol-placement': 'line-center',
+                }}
+                paint={{ 'text-color': '#ef4444', 'text-halo-color': '#fff', 'text-halo-width': 2 }}
               />
             </Source>
           )}

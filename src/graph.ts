@@ -6,13 +6,15 @@ import type { RibbonArrowOpts } from './ribbon'
 
 const { cos, sin, PI, max } = Math
 
+
 // --- Public types ---
 
 export interface GFlowNode {
   id: string
   pos: LatLon
   /** Bearing of throughput axis (degrees, 0=N 90=E). Inputs merge from
-   *  behind, outputs split ahead. */
+   *  behind, outputs split ahead. Optional — auto-derived for nodes with
+   *  a single output or sinks with a single input; defaults to 90. */
   bearing: number
   label?: string
 }
@@ -39,6 +41,8 @@ export interface FlowGraphOpts {
   minArrowWingPx?: number   // minimum wing extension in px beyond trunk edge, default 0
   plugBearingDeg?: number   // bearing convergence for crevice plugging, default 1
   plugFraction?: number     // distance convergence for crevice plugging, default 0.3
+  bezierN?: number          // bezier sample count per edge (default 20, 1=straight)
+  nodeApproach?: number     // through-node approach zone as multiple of halfW (default 0.5)
 }
 
 // --- Internal types ---
@@ -92,7 +96,6 @@ function eid(e: GFlowEdge): string {
  *  to ensure alignment at node boundaries. Interior points use perpAt. */
 function offsetCurve(
   path: LatLon[], halfW: number, refLat: number,
-  startBearing: number, endBearing: number,
 ): { left: [number, number][]; right: [number, number][] } {
   const n = path.length
   if (n < 2) return { left: [], right: [] }
@@ -100,43 +103,27 @@ function offsetCurve(
   const left: [number, number][] = []
   const right: [number, number][] = []
 
-  // Compute perpendicular at each point: blend from node-bearing perp
-  // at endpoints to bezier-tangent perp in the interior.
-  // "perpRibbon" for bearing B: [-sin(B), cos(B)] (opposite of perpL,
-  // matching ribbon() convention where perpAt gives [-dx/len, dy/len]).
-  const startRad = startBearing * PI / 180
-  const startPerp: LatLon = [-sin(startRad), cos(startRad)]
-  const endRad = endBearing * PI / 180
-  const endPerp: LatLon = [-sin(endRad), cos(endRad)]
-
-  const blendZone = Math.min(3, Math.floor(n / 4)) // blend over first/last few points
-
   for (let i = 0; i < n; i++) {
-    let pLat: number, pLon: number
-
-    if (i < blendZone) {
-      // Near start: blend from node bearing to bezier tangent
-      const t = blendZone > 0 ? i / blendZone : 1
-      const [bpLat, bpLon] = perpAt(path, i)
-      pLat = startPerp[0] * (1 - t) + bpLat * t
-      pLon = startPerp[1] * (1 - t) + bpLon * t
-    } else if (i >= n - blendZone) {
-      // Near end: blend from bezier tangent to node bearing
-      const t = blendZone > 0 ? (n - 1 - i) / blendZone : 1
-      const [bpLat, bpLon] = perpAt(path, i)
-      pLat = endPerp[0] * (1 - t) + bpLat * t
-      pLon = endPerp[1] * (1 - t) + bpLon * t
-    } else {
-      // Interior: use bezier tangent
-      ;[pLat, pLon] = perpAt(path, i)
+    // Compute tangent in Mercator screen space (x=lon, y=lat*ls).
+    // Scale dLat by ls so perpendiculars match screen angles.
+    let dy = 0, dx = 0
+    if (i < n - 1) {
+      dy += (path[i + 1][0] - path[i][0]) * ls          // dLat * ls (screen y)
+      dx += path[i + 1][1] - path[i][1]                  // dLon (screen x)
     }
-
-    // Normalize
+    if (i > 0) {
+      dy += (path[i][0] - path[i - 1][0]) * ls
+      dx += path[i][1] - path[i - 1][1]
+    }
+    // Perpendicular in screen space: rotate 90° CCW → (-dy, dx)
+    let pLon = -dy, pLat = dx
     const len = Math.sqrt(pLat * pLat + pLon * pLon)
     if (len > 0) { pLat /= len; pLon /= len }
 
-    left.push([path[i][1] + pLon * halfW * ls, path[i][0] + pLat * halfW])
-    right.push([path[i][1] - pLon * halfW * ls, path[i][0] - pLat * halfW])
+    // Apply offset: pLon is in screen-x (= lon degrees), pLat is in
+    // screen-y units, convert back to lat by dividing by ls
+    left.push([path[i][1] + pLon * halfW, path[i][0] + pLat * halfW / ls])
+    right.push([path[i][1] - pLon * halfW, path[i][0] - pLat * halfW / ls])
   }
 
   return { left, right }
@@ -162,8 +149,8 @@ function perpProjection(pos: LatLon, ref: LatLon, bearing: number, ls: number): 
   return dLat * pLat + dLon * pLon  // note: pLon already has its sign
 }
 
-function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeLayout> {
-  const { refLat, zoom, geoScale = 1, pxPerWeight } = opts
+function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth = false): Map<string, NodeLayout> {
+  const { refLat, zoom, geoScale = 1, pxPerWeight, arrowLen = 1.3, nodeApproach = 0.5 } = opts
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
   const layouts = new Map<string, NodeLayout>()
 
@@ -180,22 +167,21 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
 
   const ls = lngScale(refLat)
 
-  // Auto-compute bearing for leaf nodes from edge direction
+  // Auto-compute bearing from edge directions.
+  // Single output → toward dest. Sink with single input → from source.
+  // Fallback to 90° (east) if no edges and no declared bearing.
   for (const n of graph.nodes) {
     const inEs = inEdgesOf.get(n.id)!
     const outEs = outEdgesOf.get(n.id)!
-    if (inEs.length > 0 && outEs.length === 0 && inEs.length === 1) {
-      // Sink with single input: bearing = direction FROM source TO this node
-      const src = nodeMap.get(inEs[0].from)!
-      const dLat = n.pos[0] - src.pos[0]
-      const dLon = (n.pos[1] - src.pos[1]) * lngScale(refLat)
-      n.bearing = Math.atan2(dLon, dLat) * 180 / PI
-    }
-    if (outEs.length > 0 && inEs.length === 0 && outEs.length === 1) {
-      // Source with single output: bearing = direction FROM this node TO dest
+    if (outEs.length === 1) {
       const dst = nodeMap.get(outEs[0].to)!
       const dLat = dst.pos[0] - n.pos[0]
       const dLon = (dst.pos[1] - n.pos[1]) * lngScale(refLat)
+      n.bearing = Math.atan2(dLon, dLat) * 180 / PI
+    } else if (outEs.length === 0 && inEs.length === 1) {
+      const src = nodeMap.get(inEs[0].from)!
+      const dLat = n.pos[0] - src.pos[0]
+      const dLon = (n.pos[1] - src.pos[1]) * lngScale(refLat)
       n.bearing = Math.atan2(dLon, dLat) * 180 / PI
     }
   }
@@ -207,10 +193,15 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
     const halfW = pxToHalfDeg(pxW(pxPerWeight, throughW), zoom, geoScale, refLat)
     // Face corners: perpRibbon = [-sin(B), cos(B)] for ribbon convention
     const bRad = n.bearing * PI / 180
-    const pR: [number, number] = [-sin(bRad), cos(bRad)] // perpRibbon [lat, lon]
-    const fL = cos(bRad), fN = sin(bRad) // forward [lat, lon]
-    const ap = (outEdgesOf.get(n.id)!.length === 0 && inW > 0)
-      ? halfW * 4 : halfW * 1.5
+    // Screen-space directions for bearing B:
+    // Forward: dLon = sin(B)*d, dLat = cos(B)*d/ls
+    // Perp left: dLon = -cos(B)*d, dLat = sin(B)*d/ls
+    const fwdLon = sin(bRad), fwdLat = cos(bRad) / ls
+    const perpLon = -cos(bRad), perpLat = sin(bRad) / ls
+    const isSink = outEdgesOf.get(n.id)!.length === 0 && inW > 0
+    const ap = isSink
+      ? halfW * nodeApproach + halfW * 2 * arrowLen
+      : halfW * nodeApproach
     layouts.set(n.id, {
       node: n,
       inSlots: new Map(),
@@ -220,13 +211,13 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
       throughWeight: throughW,
       halfW,
       approachLen: ap,
-      isSink: outEdgesOf.get(n.id)!.length === 0 && inW > 0,
+      isSink,
       isSource: inEdgesOf.get(n.id)!.length === 0 && outW > 0,
-      // Face corners [lon, lat] — using perpRibbon (opposite of perpL)
-      inFaceLeft:   [n.pos[1] - fN * ap * ls + pR[1] * halfW * ls, n.pos[0] - fL * ap + pR[0] * halfW],
-      inFaceRight:  [n.pos[1] - fN * ap * ls - pR[1] * halfW * ls, n.pos[0] - fL * ap - pR[0] * halfW],
-      outFaceLeft:  [n.pos[1] + fN * ap * ls + pR[1] * halfW * ls, n.pos[0] + fL * ap + pR[0] * halfW],
-      outFaceRight: [n.pos[1] + fN * ap * ls - pR[1] * halfW * ls, n.pos[0] + fL * ap - pR[0] * halfW],
+      // Face corners [lon, lat] — screen-space perpendicular to bearing
+      inFaceLeft:   [n.pos[1] - fwdLon * ap + perpLon * halfW, n.pos[0] - fwdLat * ap + perpLat * halfW],
+      inFaceRight:  [n.pos[1] - fwdLon * ap - perpLon * halfW, n.pos[0] - fwdLat * ap - perpLat * halfW],
+      outFaceLeft:  [n.pos[1] + fwdLon * ap + perpLon * halfW, n.pos[0] + fwdLat * ap + perpLat * halfW],
+      outFaceRight: [n.pos[1] + fwdLon * ap - perpLon * halfW, n.pos[0] + fwdLat * ap - perpLat * halfW],
     })
   }
 
@@ -240,9 +231,10 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
     const dLon = (dstL.node.pos[1] - srcL.node.pos[1]) * ls
     const dist = Math.sqrt(dLat * dLat + dLon * dLon)
     const totalApproach = srcL.approachLen + dstL.approachLen
-    if (totalApproach > dist * 0.9 && dist > 0) {
-      // Distribute available space proportionally to current approach lengths
-      const available = dist * 0.9
+    // Clamp when approaches consume more than 70% of the distance,
+    // leaving at least 30% for the edge bezier.
+    if (totalApproach > dist * 0.5 && dist > 0) {
+      const available = dist * 0.5
       const srcShare = srcL.approachLen / totalApproach
       srcL.approachLen = max(srcL.halfW * 0.3, available * srcShare)
       dstL.approachLen = max(dstL.halfW * 0.3, available * (1 - srcShare))
@@ -252,26 +244,30 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
   // Compute slots for each node
   for (const n of graph.nodes) {
     const layout = layouts.get(n.id)!
-    const [fLat, fLon] = fwd(n.bearing)
-    const [pLat, pLon] = perpL(n.bearing)
+    const bRad = n.bearing * PI / 180
+    // Screen-space forward/perp (consistent with face corners)
+    const sFwdLon = sin(bRad), sFwdLat = cos(bRad) / ls
+    const sPerpLon = -cos(bRad), sPerpLat = sin(bRad) / ls
 
-    // Input slots — centered on face total
+    // Input slots
     const inEdges = inEdgesOf.get(n.id)!
     inEdges.sort((a, b) =>
       perpProjection(nodeMap.get(a.from)!.pos, n.pos, n.bearing, ls) -
       perpProjection(nodeMap.get(b.from)!.pos, n.pos, n.bearing, ls)
     )
+    const throughPx = pxW(pxPerWeight, layout.throughWeight)
     const inTotalPx = inEdges.reduce((s, e) => s + pxW(pxPerWeight, e.weight), 0)
+    const inBasePx = alignThroughWidth ? throughPx : inTotalPx
     let inCum = 0
     for (const e of inEdges) {
       const ePx = pxW(pxPerWeight, e.weight)
-      const centerOffset = -inTotalPx / 2 + inCum + ePx / 2
+      const centerOffset = -inBasePx / 2 + inCum + ePx / 2
       inCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
       layout.inSlots.set(eid(e), {
         pos: [
-          n.pos[0] - fLat * layout.approachLen + pLat * offsetDeg,
-          n.pos[1] - fLon * layout.approachLen * ls + pLon * offsetDeg * ls,
+          n.pos[0] - sFwdLat * layout.approachLen + sPerpLat * offsetDeg,
+          n.pos[1] - sFwdLon * layout.approachLen + sPerpLon * offsetDeg,
         ],
         halfW: pxToHalfDeg(ePx, zoom, geoScale, refLat),
         bearing: n.bearing,
@@ -285,16 +281,17 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
       perpProjection(nodeMap.get(b.to)!.pos, n.pos, n.bearing, ls)
     )
     const outTotalPx = outEdges.reduce((s, e) => s + pxW(pxPerWeight, e.weight), 0)
+    const outBasePx = alignThroughWidth ? throughPx : outTotalPx
     let outCum = 0
     for (const e of outEdges) {
       const ePx = pxW(pxPerWeight, e.weight)
-      const centerOffset = -outTotalPx / 2 + outCum + ePx / 2
+      const centerOffset = -outBasePx / 2 + outCum + ePx / 2
       outCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
       layout.outSlots.set(eid(e), {
         pos: [
-          n.pos[0] + fLat * layout.approachLen + pLat * offsetDeg,
-          n.pos[1] + fLon * layout.approachLen * ls + pLon * offsetDeg * ls,
+          n.pos[0] + sFwdLat * layout.approachLen + sPerpLat * offsetDeg,
+          n.pos[1] + sFwdLon * layout.approachLen + sPerpLon * offsetDeg,
         ],
         halfW: pxToHalfDeg(ePx, zoom, geoScale, refLat),
         bearing: n.bearing,
@@ -303,6 +300,98 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts): Map<string, NodeL
   }
 
   return layouts
+}
+
+/** Return debug geometry: edge center-line beziers and approach rectangles. */
+export function renderFlowGraphDebug(
+  graph: FlowGraph,
+  opts: FlowGraphOpts,
+): GeoJSON.FeatureCollection {
+  const { bezierN = 20 } = opts
+  const layouts = computeLayout(graph, opts, true)
+  const features: GeoJSON.Feature[] = []
+  const debugLs = lngScale(opts.refLat)
+
+  // Edge center-line beziers
+  for (const edge of graph.edges) {
+    const id = eid(edge)
+    const srcLayout = layouts.get(edge.from)!
+    const dstLayout = layouts.get(edge.to)!
+    const srcSlot = srcLayout.outSlots.get(id)!
+    const dstSlot = dstLayout.inSlots.get(id)!
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, debugLs)
+    features.push({
+      type: 'Feature',
+      properties: { kind: 'bezier', edge: id, weight: edge.weight },
+      geometry: {
+        type: 'LineString',
+        coordinates: path.map(p => [p[1], p[0]]),
+      },
+    })
+    // Bezier sample points
+    for (let i = 0; i < path.length; i++) {
+      features.push({
+        type: 'Feature',
+        properties: { kind: 'bezier-pt', edge: id, idx: i },
+        geometry: { type: 'Point', coordinates: [path[i][1], path[i][0]] },
+      })
+    }
+  }
+
+  const { arrowWing = 1.6, arrowLen = 1.3, nodeApproach = 0.5 } = opts
+
+  // Approach rectangles for through-nodes
+  for (const [, layout] of layouts) {
+    if (layout.inWeight === 0 || layout.outWeight === 0) continue
+    features.push({
+      type: 'Feature',
+      properties: { kind: 'approach', node: layout.node.id },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[
+          layout.inFaceLeft, layout.outFaceLeft,
+          layout.outFaceRight, layout.inFaceRight,
+          layout.inFaceLeft, // close
+        ]],
+      },
+    })
+  }
+
+  // Sink arrowhead polygons (stem rectangle + triangle)
+  for (const [, layout] of layouts) {
+    if (!layout.isSink) continue
+    const n = layout.node
+    const bRad = n.bearing * PI / 180
+    // Screen-space directions (same as traceBranch uses)
+    const sFwd: [number, number] = [sin(bRad), cos(bRad) / debugLs]
+    const sPerp: [number, number] = [-cos(bRad), sin(bRad) / debugLs]
+    const arrowH = layout.halfW * 2 * arrowLen
+    const hw = layout.halfW
+    const wingW = hw * arrowWing
+    // Input face (where bezier ends)
+    const ifLon = n.pos[1] - sFwd[0] * layout.approachLen
+    const ifLat = n.pos[0] - sFwd[1] * layout.approachLen
+    // Arrow base (where stem meets triangle)
+    const abLon = n.pos[1] - sFwd[0] * arrowH
+    const abLat = n.pos[0] - sFwd[1] * arrowH
+    const ifL: [number, number] = [ifLon + sPerp[0] * hw, ifLat + sPerp[1] * hw]
+    const ifR: [number, number] = [ifLon - sPerp[0] * hw, ifLat - sPerp[1] * hw]
+    const abL: [number, number] = [abLon + sPerp[0] * hw, abLat + sPerp[1] * hw]
+    const abR: [number, number] = [abLon - sPerp[0] * hw, abLat - sPerp[1] * hw]
+    const wL: [number, number] = [abLon + sPerp[0] * wingW, abLat + sPerp[1] * wingW]
+    const wR: [number, number] = [abLon - sPerp[0] * wingW, abLat - sPerp[1] * wingW]
+    const tip: [number, number] = [n.pos[1], n.pos[0]]
+    features.push({
+      type: 'Feature',
+      properties: { kind: 'arrowhead', node: n.id },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[ifL, abL, wL, tip, wR, abR, ifR, ifL]],
+      },
+    })
+  }
+
+  return { type: 'FeatureCollection', features }
 }
 
 // --- Main render ---
@@ -314,9 +403,11 @@ export function renderFlowGraph(
   const {
     refLat, zoom, geoScale = 1, pxPerWeight, color,
     arrowWing = 1.6, arrowLen = 1.3, minArrowWingPx = 0,
+    bezierN = 20,
   } = opts
   const layouts = computeLayout(graph, opts)
   const features: GeoJSON.Feature[] = []
+  const renderLs = lngScale(refLat)
 
   // 1. Render each edge as a bezier ribbon
   for (const edge of graph.edges) {
@@ -328,7 +419,7 @@ export function renderFlowGraph(
     const ePx = pxW(pxPerWeight, edge.weight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
 
-    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, renderLs)
     const ring = ribbon(path, halfW, refLat)
     if (ring.length) {
       features.push(ringFeature(ring, { color, width: ePx, key: id, opacity: 1 }))
@@ -441,8 +532,9 @@ export function renderFlowGraphSinglePoly(
     refLat, zoom, geoScale = 1, pxPerWeight, color,
     arrowWing = 1.6, arrowLen = 1.3, minArrowWingPx = 0,
     plugBearingDeg = 1, plugFraction = 0.3,
+    bezierN = 20,
   } = opts
-  const layouts = computeLayout(graph, opts)
+  const layouts = computeLayout(graph, opts, true) // align slots to through-width
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
 
   const outEdgesOf = new Map<string, GFlowEdge[]>()
@@ -457,6 +549,7 @@ export function renderFlowGraphSinglePoly(
   }
 
   // Compute edge pairs for every edge
+  const spLs = lngScale(refLat)
   const edgePairs = new Map<string, EdgePair>()
   for (const edge of graph.edges) {
     const id = eid(edge)
@@ -466,12 +559,10 @@ export function renderFlowGraphSinglePoly(
     const dstSlot = dstLayout.inSlots.get(id)!
     const ePx = pxW(pxPerWeight, edge.weight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
-    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing)
-    // Use offsetCurve with node bearings at endpoints for alignment
-    edgePairs.set(id, offsetCurve(path, halfW, refLat, srcSlot.bearing, dstSlot.bearing))
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, spLs)
+    edgePairs.set(id, offsetCurve(path, halfW, refLat))
   }
 
-  // Body pairs: just face corners (2 points per side), computed from node geometry.
   // Body pairs: use precomputed face corners from layout
   const bodyPairs = new Map<string, EdgePair>()
   for (const [nid, layout] of layouts) {
@@ -505,10 +596,12 @@ export function renderFlowGraphSinglePoly(
   for (const [nid, layout] of layouts) {
     if (!layout.isSource) continue
     const n = layout.node
-    const ls = lngScale(refLat)
-    const [fLat, fLon] = fwd(n.bearing)
-    const outFace: LatLon = [n.pos[0] + fLat * layout.approachLen, n.pos[1] + fLon * layout.approachLen * ls]
-    srcTrunkPairs.set(nid, offsetCurve(straightLine(n.pos, outFace), layout.halfW, refLat, n.bearing, n.bearing))
+    const bR = n.bearing * PI / 180
+    const outFace: LatLon = [
+      n.pos[0] + cos(bR) / spLs * layout.approachLen,
+      n.pos[1] + sin(bR) * layout.approachLen,
+    ]
+    srcTrunkPairs.set(nid, offsetCurve(straightLine(n.pos, outFace, bezierN), layout.halfW, refLat))
   }
 
   // (Node-boundary alignment removed — was experimental, degraded multi-poly)
@@ -546,6 +639,9 @@ export function renderFlowGraphSinglePoly(
     return [lon, lat]
   }
 
+  // Track which sources get traced (to avoid duplicate standalone traces)
+  const tracedSources = new Set<string>()
+
   /** Recursively trace a branch: forward along left edges to sink,
    *  then backward along right edges. Appends directly to `ring`. */
   function traceBranch(nodeId: string, arrivedViaEdge: string | null, ring: [number, number][]) {
@@ -553,80 +649,99 @@ export function renderFlowGraphSinglePoly(
 
     // --- Forward: left edges of this node's prefix ---
     if (layout.isSource) {
+      tracedSources.add(nodeId)
       const tp = srcTrunkPairs.get(nodeId)
       if (tp) ring.push(...tp.left)
     }
 
     const outs = sortedOuts(nodeId)
 
-    // --- Sink: arrowhead from input face to node pos ---
+    // --- Sink: straight trunk + isosceles arrowhead ---
+    // The offset curve ends at the input face (approachLen behind node).
+    // From there, a straight trunk of nodeApproach*halfW connects to the
+    // arrowhead base, then wingL → tip → wingR.
     if (layout.isSink) {
       const n = layout.node
-      const nodeLs = lngScale(refLat)
-      const [fLat, fLon] = fwd(n.bearing)
-      // Tip at node.pos. Arrow eats backward into the trunk.
-      // Approach length determines the arrow budget.
-      const inFace: LatLon = [
-        n.pos[0] - fLat * layout.approachLen,
-        n.pos[1] - fLon * layout.approachLen * nodeLs,
-      ]
-      const widthPx = pxW(pxPerWeight, layout.throughWeight)
-      const minWingFactor = (widthPx + minArrowWingPx * 2) / widthPx
-      const effectiveWing = max(arrowWing, minWingFactor)
-      const ap = arrowEdgePairForPath(
-        straightLine(inFace, n.pos, 10),
-        layout.halfW, refLat,
-        { arrowWingFactor: effectiveWing, arrowLenFactor: arrowLen, widthPx, maxArrowFraction: 0.85 },
-      )
-      ring.push(...ap.left)
-      if (ap.tip) ring.push(ap.tip)
-      ring.push(...[...ap.right].reverse())
+      const bRad = n.bearing * PI / 180
+      // Screen-space directions
+      const sFwd: [number, number] = [sin(bRad), cos(bRad) / ls]  // [dLon, dLat]
+      const sPerp: [number, number] = [-cos(bRad), sin(bRad) / ls] // [dLon, dLat]
+      const arrowH = layout.halfW * 2 * arrowLen
+      // Arrow base position (arrowH behind tip)
+      const abLon = n.pos[1] - sFwd[0] * arrowH
+      const abLat = n.pos[0] - sFwd[1] * arrowH
+      const hw = layout.halfW
+      const trunkL: [number, number] = [abLon + sPerp[0] * hw, abLat + sPerp[1] * hw]
+      const trunkR: [number, number] = [abLon - sPerp[0] * hw, abLat - sPerp[1] * hw]
+      const wingW = hw * arrowWing
+      const wingL: [number, number] = [abLon + sPerp[0] * wingW, abLat + sPerp[1] * wingW]
+      const wingR: [number, number] = [abLon - sPerp[0] * wingW, abLat - sPerp[1] * wingW]
+      const tip: [number, number] = [n.pos[1], n.pos[0]]
+      ring.push(trunkL, wingL, tip, wingR, trunkR)
       return
     }
 
+    // --- Merge: trace side inputs as backward branches, then output ---
+    // Side inputs "above" the main input (in perp order) are traced
+    // BEFORE the output: left reversed → recurse to source → right.
+    // This gives the correct outer perimeter for Y-shaped merges.
+    const ins = sortedIns(nodeId)
+    const mainIdx = arrivedViaEdge
+      ? ins.findIndex(e => eid(e) === arrivedViaEdge)
+      : -1
+
+    // sortedIns ascending by perpProjection:
+    //   low index = RIGHT of bearing (south for ~east bearing)
+    //   high index = LEFT of bearing (north for ~east bearing)
+
+    // LEFT/north side inputs (indices > mainIdx, innermost first)
+    // From the main input's top edge, exit along the side input's INNER
+    // (bottom/right) edge, around source, back along OUTER (top/left) edge.
+    if (mainIdx >= 0) {
+      for (let i = mainIdx + 1; i < ins.length; i++) {
+        const sideEdge = ins[i]
+        const ep = edgePairs.get(eid(sideEdge))!
+        // Inner edge (RIGHT = bottom of north arm), trace backward (merge→source)
+        ring.push(...[...ep.right].reverse())
+        const srcL = layouts.get(sideEdge.from)!
+        if (srcL.isSource) {
+          tracedSources.add(sideEdge.from)
+          const tp = srcTrunkPairs.get(sideEdge.from)
+          if (tp) { ring.push(...[...tp.right].reverse()); ring.push(...tp.left) }
+        }
+        // Outer edge (LEFT = top of north arm), trace forward (source→merge)
+        ring.push(...ep.left)
+      }
+    }
+
     // --- Forward: trace each output branch ---
-    for (let i = 0; i < outs.length; i++) {
+    // Iterate from northmost (highest perpProjection = last in sorted)
+    // to southmost, so the first output's LEFT continues the input's
+    // top edge, and the last output's RIGHT continues the input's bottom.
+    for (let i = outs.length - 1; i >= 0; i--) {
       const outEdge = outs[i]
       const ep = edgePairs.get(eid(outEdge))!
-
-      // Forward along this edge's left
       ring.push(...ep.left)
-
-      // Recurse into destination
       traceBranch(outEdge.to, eid(outEdge), ring)
-
-      // Backward along this edge's right
       ring.push(...[...ep.right].reverse())
     }
 
-    // --- Backward: merge side-inputs ---
-    // After tracing all outputs and coming back, trace side inputs
-    // (inputs other than the one we arrived from).
-    const ins = sortedIns(nodeId)
-    if (ins.length > 1 && arrivedViaEdge) {
-      // Walk side inputs from bottom to top (reversed order)
-      for (let i = ins.length - 1; i >= 0; i--) {
-        const inEdge = ins[i]
-        if (eid(inEdge) === arrivedViaEdge) continue
-
-        const ep = edgePairs.get(eid(inEdge))!
-
-        // Backward along this input's right edge (merge→source)
+    // RIGHT/south side inputs (indices < mainIdx, innermost first)
+    // From the output's bottom edge, exit along the side input's OUTER
+    // (bottom/right) edge, around source, back along INNER (top/left) edge.
+    if (mainIdx >= 0) {
+      for (let i = mainIdx - 1; i >= 0; i--) {
+        const sideEdge = ins[i]
+        const ep = edgePairs.get(eid(sideEdge))!
+        // Outer edge (RIGHT = bottom of south arm), trace backward (merge→source)
         ring.push(...[...ep.right].reverse())
-
-        // Trace around the source node
-        const srcLayout = layouts.get(inEdge.from)!
-        if (srcLayout.isSource) {
-          tracedSources.add(inEdge.from)
-          const tp = srcTrunkPairs.get(inEdge.from)
-          if (tp) {
-            ring.push(...[...tp.right].reverse())
-            ring.push(...tp.left)
-          }
+        const srcL = layouts.get(sideEdge.from)!
+        if (srcL.isSource) {
+          tracedSources.add(sideEdge.from)
+          const tp = srcTrunkPairs.get(sideEdge.from)
+          if (tp) { ring.push(...[...tp.right].reverse()); ring.push(...tp.left) }
         }
-        // TODO: handle non-source input nodes
-
-        // Forward along this input's left edge (source→merge)
+        // Inner edge (LEFT = top of south arm), trace forward (source→merge)
         ring.push(...ep.left)
       }
     }
@@ -636,9 +751,6 @@ export function renderFlowGraphSinglePoly(
       if (tp) ring.push(...[...tp.right].reverse())
     }
   }
-
-  // Track which sources get traced as merge side-inputs
-  const tracedSources = new Set<string>()
 
   // Find the main source: pick the source with highest throughput
   // that feeds into the first input of its destination
