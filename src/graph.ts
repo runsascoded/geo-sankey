@@ -36,8 +36,10 @@ export interface FlowGraphOpts {
   geoScale?: number
   pxPerWeight: number | ((w: number) => number)
   color: string
-  arrowWing?: number        // wing width multiplier, default 1.6
-  arrowLen?: number         // arrow length multiplier, default 1.3
+  arrowWing?: number        // wing width multiplier (derived from wing+angle if not set)
+  arrowLen?: number         // arrow length multiplier (derived from wing+angle if not set)
+  wing?: number             // wing extension as fraction of stem width, one side (default 0.3)
+  angle?: number            // wingtip half-angle in degrees (default 45, range 1-60)
   minArrowWingPx?: number   // minimum wing extension in px beyond trunk edge, default 0
   plugBearingDeg?: number   // bearing convergence for crevice plugging, default 1
   plugFraction?: number     // distance convergence for crevice plugging, default 0.3
@@ -77,8 +79,8 @@ function segIntersect(
   if (Math.abs(denom) < 1e-20) return null // parallel
   const t = ((b1[0] - a1[0]) * d2y - (b1[1] - a1[1]) * d2x) / denom
   const u = ((b1[0] - a1[0]) * d1y - (b1[1] - a1[1]) * d1x) / denom
-  // Strict segment bounds with small epsilon for numerical precision
-  if (t < -0.01 || t > 1.01 || u < -0.01 || u > 1.01) return null
+  // Strict: both parameters must be within [0, 1] — actual intersection
+  if (t < 0.001 || t > 0.999 || u < 0.001 || u > 0.999) return null
   return [a1[0] + d1x * t, a1[1] + d1y * t]
 }
 
@@ -86,21 +88,31 @@ function segIntersect(
  *  close in index cross, splice out the inner vertices and replace with
  *  the intersection point. This resolves crease crossings where two
  *  inner edges of a merge/split overlap slightly. */
-function fixRingCrossings(ring: [number, number][]): [number, number][] {
-  const maxGap = 6 // only check segments within this index distance
-  let i = 0
-  while (i < ring.length - 1) {
-    let fixed = false
-    for (let j = i + 2; j < Math.min(i + maxGap, ring.length - 1); j++) {
-      const ix = segIntersect(ring[i], ring[i + 1], ring[j], ring[j + 1])
-      if (ix) {
-        // Splice out i+1..j and replace with intersection point
-        ring.splice(i + 1, j - i, ix)
-        fixed = true
-        break
+/** Clean a ring by removing self-intersections. For each pair of crossing
+ *  segments, replace the loop between them with the intersection point.
+ *  Scans all segment pairs within a window to catch both crease overlaps
+ *  and nearby crossings. */
+function cleanRing(ring: [number, number][]): [number, number][] {
+  // Remove zero-length edges first
+  for (let i = ring.length - 2; i >= 0; i--) {
+    const dx = ring[i + 1][0] - ring[i][0], dy = ring[i + 1][1] - ring[i][1]
+    if (dx * dx + dy * dy < 1e-18) ring.splice(i + 1, 1)
+  }
+  // Find and fix all self-intersections, starting from shortest loops
+  let changed = true
+  while (changed) {
+    changed = false
+    for (let i = 0; i < ring.length - 3 && !changed; i++) {
+      for (let j = i + 2; j < ring.length - 1 && !changed; j++) {
+        if (i === 0 && j === ring.length - 2) continue // skip closing edge
+        const ix = segIntersect(ring[i], ring[i + 1], ring[j], ring[j + 1])
+        if (ix) {
+          // Replace the loop between i+1 and j with intersection point
+          ring.splice(i + 1, j - i, ix)
+          changed = true
+        }
       }
     }
-    if (!fixed) i++
   }
   return ring
 }
@@ -122,6 +134,19 @@ function creaseIntersection(
     }
   }
   return null
+}
+
+/** Resolve arrowhead params: wing/angle take precedence over arrowWing/arrowLen.
+ *  angle = half-angle at the arrow tip (pointy end). */
+function resolveArrow(opts: FlowGraphOpts): { arrowWing: number; arrowLen: number } {
+  const wing = opts.wing ?? 0.3
+  const angle = opts.angle ?? 45
+  const arrowWing = opts.arrowWing ?? (1 + 2 * wing)
+  // angle = internal angle at each wingtip (between wing edge and base line)
+  // tan(angle) = arrowH / wingW, where wingW = arrowWing * halfW
+  // arrowLen = arrowH / (2 * halfW) = arrowWing * tan(angle) / 2
+  const arrowLen = opts.arrowLen ?? (arrowWing * Math.tan(angle * PI / 180) / 2)
+  return { arrowWing, arrowLen }
 }
 
 // --- Internal types ---
@@ -251,7 +276,8 @@ function perpProjection(pos: LatLon, ref: LatLon, bearing: number, ls: number): 
 }
 
 function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth = false): Map<string, NodeLayout> {
-  const { refLat, zoom, geoScale = 1, pxPerWeight, arrowLen = 1.3, nodeApproach = 0.5 } = opts
+  const { refLat, zoom, geoScale = 1, pxPerWeight, nodeApproach = 0.5 } = opts
+  const { arrowLen } = resolveArrow(opts)
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
   const layouts = new Map<string, NodeLayout>()
 
@@ -439,7 +465,8 @@ export function renderFlowGraphDebug(
     }
   }
 
-  const { arrowWing = 1.6, arrowLen = 1.3, nodeApproach = 0.5 } = opts
+  const { arrowWing, arrowLen } = resolveArrow(opts)
+  const { nodeApproach = 0.5 } = opts
 
   // Approach rectangles for through-nodes
   for (const [, layout] of layouts) {
@@ -503,9 +530,9 @@ export function renderFlowGraph(
 ): GeoJSON.FeatureCollection {
   const {
     refLat, zoom, geoScale = 1, pxPerWeight, color,
-    arrowWing = 1.6, arrowLen = 1.3, minArrowWingPx = 0,
-    bezierN = 20,
+    minArrowWingPx = 0, bezierN = 20,
   } = opts
+  const { arrowWing, arrowLen } = resolveArrow(opts)
   const layouts = computeLayout(graph, opts)
   const features: GeoJSON.Feature[] = []
   const renderLs = lngScale(refLat)
@@ -631,10 +658,11 @@ export function renderFlowGraphSinglePoly(
 ): GeoJSON.FeatureCollection {
   const {
     refLat, zoom, geoScale = 1, pxPerWeight, color,
-    arrowWing = 1.6, arrowLen = 1.3, minArrowWingPx = 0,
+    minArrowWingPx = 0,
     plugBearingDeg = 1, plugFraction = 0.3, creaseSkip = 1,
     bezierN = 20,
   } = opts
+  const { arrowWing, arrowLen } = resolveArrow(opts)
   const layouts = computeLayout(graph, opts, true) // align slots to through-width
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
 
@@ -816,34 +844,21 @@ export function renderFlowGraphSinglePoly(
     const hasNorthIns = mainIdx >= 0 && mainIdx < ins.length - 1
     const hasSouthIns = mainIdx > 0
 
-    // Pop main input face points at north crease
-    if (hasNorthIns && creaseSkip > 0) {
-      const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
-      const sideEp = edgePairs.get(eid(ins[mainIdx + 1]))
-      const skip = mainEp && sideEp
-        ? creaseConvergence(mainEp.left, sideEp.right, layout.halfW * 0.5)
-        : creaseSkip
-      for (let k = 0; k < skip && ring.length > 0; k++) ring.pop()
-    }
-
     // LEFT/north side inputs (indices > mainIdx, innermost first)
+    // Push full edges — cleanRing will remove doubled-back crease edges.
     if (mainIdx >= 0) {
       for (let i = mainIdx + 1; i < ins.length; i++) {
         const sideEdge = ins[i]
         const ep = edgePairs.get(eid(sideEdge))!
-        const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
-        const skip = mainEp && creaseSkip > 0
-          ? creaseConvergence(mainEp.left, ep.right, layout.halfW * 0.5)
-          : creaseSkip
         const rRev = [...ep.right].reverse()
-        ring.push(...rRev.slice(skip))
+        ring.push(...rRev)
         const srcL = layouts.get(sideEdge.from)!
         if (srcL.isSource) {
           tracedSources.add(sideEdge.from)
           const tp = srcTrunkPairs.get(sideEdge.from)
           if (tp) { ring.push(...[...tp.right].reverse()); ring.push(...tp.left) }
         }
-        ring.push(...(skip > 0 ? ep.left.slice(0, -skip) : ep.left))
+        ring.push(...ep.left)
       }
     }
 
@@ -859,22 +874,10 @@ export function renderFlowGraphSinglePoly(
       const ep = edgePairs.get(eid(outEdge))!
       // Skip face endpoints at crease transitions — no midpoints needed,
       // the polygon connects directly between the second-to-last points.
-      const skipLeft0 = creaseSkip > 0 && (i > 0 || hasNorthInputs)
-      const skipRight0 = creaseSkip > 0 && (i < outsList.length - 1 || hasSouthInputs)
-      ring.push(...(skipLeft0 ? ep.left.slice(creaseSkip) : ep.left))
+      // Push full edges — cleanRing handles crease doubled edges.
+      ring.push(...ep.left)
       traceBranch(outEdge.to, eid(outEdge), ring)
-      // Skip right[n-1] at dest merge crease (south-side inputs)
-      const dstLayout = layouts.get(outEdge.to)!
-      const dstIns = sortedIns(outEdge.to)
-      const dstMainIdx = dstIns.findIndex(e => eid(e) === eid(outEdge))
-      const dstHasSouthInputs = dstMainIdx > 0
-      const rRev = [...ep.right].reverse()
-      const skipRightFirst = dstHasSouthInputs // skip right[n-1] at dest face
-      const cs = creaseSkip
-      let rSlice = rRev
-      if (skipRightFirst && cs > 0) rSlice = rSlice.slice(cs)
-      if (skipRight0 && cs > 0) rSlice = rSlice.slice(0, -cs)
-      ring.push(...rSlice)
+      ring.push(...[...ep.right].reverse())
     }
 
     // RIGHT/south side inputs (indices < mainIdx, innermost first)
@@ -882,19 +885,15 @@ export function renderFlowGraphSinglePoly(
       for (let i = mainIdx - 1; i >= 0; i--) {
         const sideEdge = ins[i]
         const ep = edgePairs.get(eid(sideEdge))!
-        const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
-        const skip = mainEp && creaseSkip > 0
-          ? creaseConvergence(mainEp.right, ep.left, layout.halfW * 0.5)
-          : creaseSkip
         const rRev = [...ep.right].reverse()
-        ring.push(...rRev.slice(skip))
+        ring.push(...rRev)
         const srcL = layouts.get(sideEdge.from)!
         if (srcL.isSource) {
           tracedSources.add(sideEdge.from)
           const tp = srcTrunkPairs.get(sideEdge.from)
           if (tp) { ring.push(...[...tp.right].reverse()); ring.push(...tp.left) }
         }
-        ring.push(...(skip > 0 ? ep.left.slice(0, -skip) : ep.left))
+        ring.push(...ep.left)
       }
     }
 
@@ -923,7 +922,7 @@ export function renderFlowGraphSinglePoly(
     traceBranch(nid, null, ring)
     if (ring.length > 0) {
       if (creaseSkip > 0) {
-        ring = fixRingCrossings(ring)
+        ring = cleanRing(ring)
         ring = simplifyRing(ring)
       }
       ring.push(ring[0])

@@ -71,16 +71,27 @@ function AppInner() {
       <header>
         <h1>geo-sankey</h1>
         <nav>
-          {examples.map(e => (
-            <button
-              key={e.id}
-              className={e.id === active ? 'active' : ''}
-              onClick={() => setActive(e.id)}
-              title={`Shortcut: ${e.key}`}
-            >
-              {e.label}
-            </button>
-          ))}
+          {examples.map(e => {
+            const params = new URLSearchParams(window.location.search)
+            params.set('ex', e.id)
+            const href = `?${params.toString()}`
+            return (
+              <a
+                key={e.id}
+                href={href}
+                className={e.id === active ? 'active' : ''}
+                onClick={ev => {
+                  if (!ev.metaKey && !ev.ctrlKey) {
+                    ev.preventDefault()
+                    setActive(e.id)
+                  }
+                }}
+                title={`Shortcut: ${e.key}`}
+              >
+                {e.label}
+              </a>
+            )
+          })}
         </nav>
       </header>
       <main>

@@ -57,22 +57,23 @@ nav {
   gap: 0.25rem;
 }
 
-nav button {
+nav a {
   padding: 0.4rem 0.8rem;
   border: 1px solid var(--border-hover);
   border-radius: 6px;
   background: var(--bg-surface);
+  text-decoration: none;
   color: var(--fg);
   font-size: 0.85rem;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 
-nav button:hover {
+nav a:hover {
   background: var(--border);
 }
 
-nav button.active {
+nav a.active {
   background: var(--active-bg);
   color: var(--active-fg);
   border-color: var(--active-bg);
