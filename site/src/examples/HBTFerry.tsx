@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
@@ -37,8 +37,8 @@ const graph: FlowGraph = {
 }
 
 const boolParam: Param<boolean> = {
-  encode: (v) => v ? '' : undefined,
-  decode: (s) => s != null,
+  encode: (v) => v ? '1' : undefined,
+  decode: (s) => s === '1' || s === '',
 }
 const numParam = (def: number): Param<number> => ({
   encode: (v) => v === def ? undefined : String(v),
@@ -134,9 +134,17 @@ export default function FerryTest() {
     for (const f of geojson.features) {
       const coords = (f.geometry as GeoJSON.Polygon).coordinates[0]
       for (let i = 0; i < coords.length - 1; i++) {
+        const [lon0, lat0] = coords[i], [lon1, lat1] = coords[i + 1]
+        const dLat = lat1 - lat0, dLon = lon1 - lon0
+        const bearing = Math.atan2(dLon, dLat) * 180 / Math.PI
         segs.push({
           type: 'Feature',
-          properties: { idx: i, label: `${i}` },
+          properties: {
+            idx: i, label: `${i}`,
+            bearing: Math.round(bearing * 10) / 10,
+            from: `${lat0.toFixed(6)},${lon0.toFixed(6)}`,
+            to: `${lat1.toFixed(6)},${lon1.toFixed(6)}`,
+          },
           geometry: {
             type: 'LineString',
             coordinates: [coords[i], coords[i + 1]],
@@ -150,6 +158,22 @@ export default function FerryTest() {
   const onMove = useCallback((e: { viewState: { longitude: number; latitude: number; zoom: number } }) => {
     setLLZ({ lat: e.viewState.latitude, lng: e.viewState.longitude, zoom: e.viewState.zoom })
   }, [setLLZ])
+
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
+  const onEdgeHover = useCallback((e: any) => {
+    if (e.features?.length) {
+      const f = e.features[0]
+      const p = f.properties
+      if (f.geometry?.type === 'Point') {
+        const [lon, lat] = f.geometry.coordinates
+        setTooltip({ x: e.point.x, y: e.point.y, text: `pt #${p.idx}\n${lat.toFixed(6)}, ${lon.toFixed(6)}` })
+      } else {
+        setTooltip({ x: e.point.x, y: e.point.y, text: `edge #${p.idx} bearing:${p.bearing}\u00B0\n${p.from} → ${p.to}` })
+      }
+    } else {
+      setTooltip(null)
+    }
+  }, [])
 
   const { theme } = useTheme()
 
@@ -211,12 +235,15 @@ export default function FerryTest() {
           <span style={{ fontSize: 11, minWidth: 24 }}>{creaseSkip}</span>
         </div>
       </div>
-      <div className="map-container">
+      <div className="map-container" style={{ position: 'relative' }}>
         <MapGL
           initialViewState={{ longitude: llz.lng, latitude: llz.lat, zoom: llz.zoom }}
           style={{ width: '100%', height: '100%' }}
           mapStyle={MAP_STYLES[theme]}
           onMove={onMove}
+          onMouseMove={onEdgeHover}
+          onMouseLeave={() => setTooltip(null)}
+          interactiveLayerIds={showRing ? ['ring-edge-lines', 'ring-edge-labels', 'ring-circles'] : []}
         >
           <Source id="flows" type="geojson" data={geojson}>
             <Layer
@@ -331,6 +358,13 @@ export default function FerryTest() {
             </Source>
           )}
         </MapGL>
+        {tooltip && (
+          <div style={{
+            position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 10,
+            background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px',
+            borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10,
+          }}>{tooltip.text}</div>
+        )}
       </div>
     </div>
   )

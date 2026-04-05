@@ -29,8 +29,8 @@ const graph: FlowGraph = {
 }
 
 const boolParam: Param<boolean> = {
-  encode: (v) => v ? '' : undefined,
-  decode: (s) => s != null,
+  encode: (v) => v ? '1' : undefined,
+  decode: (s) => s === '1' || s === '',
 }
 const numParam = (def: number): Param<number> => ({
   encode: (v) => v === def ? undefined : String(v),
