@@ -65,6 +65,65 @@ function simplifyRing(ring: [number, number][], eps = 0.000001): [number, number
   return out
 }
 
+/** Find intersection of two line segments (a1→a2) and (b1→b2).
+ *  Returns the intersection point [lon, lat] or null if parallel/non-intersecting. */
+function segIntersect(
+  a1: [number, number], a2: [number, number],
+  b1: [number, number], b2: [number, number],
+): [number, number] | null {
+  const d1x = a2[0] - a1[0], d1y = a2[1] - a1[1]
+  const d2x = b2[0] - b1[0], d2y = b2[1] - b1[1]
+  const denom = d1x * d2y - d1y * d2x
+  if (Math.abs(denom) < 1e-20) return null // parallel
+  const t = ((b1[0] - a1[0]) * d2y - (b1[1] - a1[1]) * d2x) / denom
+  const u = ((b1[0] - a1[0]) * d1y - (b1[1] - a1[1]) * d1x) / denom
+  // Strict segment bounds with small epsilon for numerical precision
+  if (t < -0.01 || t > 1.01 || u < -0.01 || u > 1.01) return null
+  return [a1[0] + d1x * t, a1[1] + d1y * t]
+}
+
+/** Fix nearby self-intersections in a ring. When two segments that are
+ *  close in index cross, splice out the inner vertices and replace with
+ *  the intersection point. This resolves crease crossings where two
+ *  inner edges of a merge/split overlap slightly. */
+function fixRingCrossings(ring: [number, number][]): [number, number][] {
+  const maxGap = 6 // only check segments within this index distance
+  let i = 0
+  while (i < ring.length - 1) {
+    let fixed = false
+    for (let j = i + 2; j < Math.min(i + maxGap, ring.length - 1); j++) {
+      const ix = segIntersect(ring[i], ring[i + 1], ring[j], ring[j + 1])
+      if (ix) {
+        // Splice out i+1..j and replace with intersection point
+        ring.splice(i + 1, j - i, ix)
+        fixed = true
+        break
+      }
+    }
+    if (!fixed) i++
+  }
+  return ring
+}
+
+/** At a merge/split crease, find where the two adjacent inner edges
+ *  intersect. Walk backward from the face and find the intersection of
+ *  the last segments. Returns the intersection point or null. */
+function creaseIntersection(
+  edgeA: [number, number][], // inner edge of arm A (source→merge direction)
+  edgeB: [number, number][], // inner edge of arm B (source→merge direction)
+): [number, number] | null {
+  const nA = edgeA.length, nB = edgeB.length
+  if (nA < 2 || nB < 2) return null
+  // Try last few segment pairs to find intersection
+  for (let a = nA - 2; a >= Math.max(0, nA - 4); a--) {
+    for (let b = nB - 2; b >= Math.max(0, nB - 4); b--) {
+      const pt = segIntersect(edgeA[a], edgeA[a + 1], edgeB[b], edgeB[b + 1])
+      if (pt) return pt
+    }
+  }
+  return null
+}
+
 // --- Internal types ---
 
 interface Slot {
@@ -758,7 +817,7 @@ export function renderFlowGraphSinglePoly(
     const hasSouthIns = mainIdx > 0
 
     // Pop main input face points at north crease
-    if (hasNorthIns) {
+    if (hasNorthIns && creaseSkip > 0) {
       const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
       const sideEp = edgePairs.get(eid(ins[mainIdx + 1]))
       const skip = mainEp && sideEp
@@ -772,9 +831,8 @@ export function renderFlowGraphSinglePoly(
       for (let i = mainIdx + 1; i < ins.length; i++) {
         const sideEdge = ins[i]
         const ep = edgePairs.get(eid(sideEdge))!
-        // Detect convergence between this inner edge and the output/main edge
         const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
-        const skip = mainEp
+        const skip = mainEp && creaseSkip > 0
           ? creaseConvergence(mainEp.left, ep.right, layout.halfW * 0.5)
           : creaseSkip
         const rRev = [...ep.right].reverse()
@@ -801,9 +859,8 @@ export function renderFlowGraphSinglePoly(
       const ep = edgePairs.get(eid(outEdge))!
       // Skip face endpoints at crease transitions — no midpoints needed,
       // the polygon connects directly between the second-to-last points.
-      const skipLeft0 = i > 0 || hasNorthInputs
-      const skipRight0 = i < outsList.length - 1 || hasSouthInputs
-      // Skip left[n-1] at dest merge crease (traceBranch pops it if needed)
+      const skipLeft0 = creaseSkip > 0 && (i > 0 || hasNorthInputs)
+      const skipRight0 = creaseSkip > 0 && (i < outsList.length - 1 || hasSouthInputs)
       ring.push(...(skipLeft0 ? ep.left.slice(creaseSkip) : ep.left))
       traceBranch(outEdge.to, eid(outEdge), ring)
       // Skip right[n-1] at dest merge crease (south-side inputs)
@@ -825,9 +882,8 @@ export function renderFlowGraphSinglePoly(
       for (let i = mainIdx - 1; i >= 0; i--) {
         const sideEdge = ins[i]
         const ep = edgePairs.get(eid(sideEdge))!
-        // Detect convergence between this inner edge and the main input
         const mainEp = arrivedViaEdge ? edgePairs.get(arrivedViaEdge) : null
-        const skip = mainEp
+        const skip = mainEp && creaseSkip > 0
           ? creaseConvergence(mainEp.right, ep.left, layout.halfW * 0.5)
           : creaseSkip
         const rRev = [...ep.right].reverse()
@@ -866,7 +922,10 @@ export function renderFlowGraphSinglePoly(
     let ring: [number, number][] = []
     traceBranch(nid, null, ring)
     if (ring.length > 0) {
-      ring = simplifyRing(ring)
+      if (creaseSkip > 0) {
+        ring = fixRingCrossings(ring)
+        ring = simplifyRing(ring)
+      }
       ring.push(ring[0])
       const w = pxW(pxPerWeight, layouts.get(nid)!.throughWeight)
       features.push(ringFeature(ring, { color, width: w, key: `sp-${nid}`, opacity: 1 }))
