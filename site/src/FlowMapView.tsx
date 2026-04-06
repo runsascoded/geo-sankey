@@ -3,7 +3,7 @@ import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
 import { useActions } from 'use-kbd'
-import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug } from 'geo-sankey'
+import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderNodes } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
@@ -81,10 +81,10 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   }, [])
   const [singlePoly, setSinglePoly] = useUrlState('sp', boolParam)
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
-  const [showNodes, setShowNodes] = useUrlState('nodes', boolParam)
+  const [showNodes, setShowNodes] = useUrlState('nodes', intParam(0))
   const [showGraph, setShowGraph] = useUrlState('graph', boolParam)
   const [opacity, setOpacity] = useUrlState('o', numParam(0.5))
-  const [wing, setWing] = useUrlState('w', numParam(0.3))
+  const [wing, setWing] = useUrlState('w', numParam(0.4))
   const [angle, setAngle] = useUrlState('ang', intParam(45))
   const [bezierN, setBezierN] = useUrlState('bn', intParam(20))
   const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(0.5))
@@ -94,7 +94,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   useActions({
     toggleSinglePoly: { label: 'Toggle single-poly', group: 'Config', defaultBindings: ['s'], handler: () => setSinglePoly(!singlePoly) },
     toggleRingPoints: { label: 'Toggle ring points', group: 'Config', defaultBindings: ['r'], handler: () => setShowRing(!showRing) },
-    toggleNodes: { label: 'Toggle nodes', group: 'Config', defaultBindings: ['n'], handler: () => setShowNodes(!showNodes) },
+    toggleNodes: { label: 'Cycle nodes (off → endpoints → all)', group: 'Config', defaultBindings: ['n'], handler: () => setShowNodes((showNodes + 1) % 3) },
     toggleGraph: { label: 'Toggle graph overlay', group: 'Config', defaultBindings: ['g'], handler: () => setShowGraph(!showGraph) },
     opacityUp: { label: 'Increase opacity', group: 'Config', defaultBindings: ['shift+up'], handler: () => setOpacity(Math.min(1, opacity + 0.1)) },
     opacityDown: { label: 'Decrease opacity', group: 'Config', defaultBindings: ['shift+down'], handler: () => setOpacity(Math.max(0.1, opacity - 0.1)) },
@@ -167,14 +167,10 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       : renderFlowGraph(graph, graphOpts),
   [graph, llz.zoom, singlePoly, wing, angle, bezierN, nodeApproach, creaseSkip, widthScale])
 
-  const nodePoints = useMemo(() => ({
-    type: 'FeatureCollection' as const,
-    features: graph.nodes.map(n => ({
-      type: 'Feature' as const,
-      properties: { id: n.id, label: n.label ?? n.id, bearing: n.bearing },
-      geometry: { type: 'Point' as const, coordinates: [n.pos[1], n.pos[0]] },
-    })),
-  }), [graph])
+  const nodePoints = useMemo(() => {
+    const filter = showNodes === 2 || editMode ? 'all' as const : showNodes === 1 ? 'endpoints' as const : 'all' as const
+    return renderNodes(graph, filter)
+  }, [graph, showNodes, editMode])
 
   const debugGeo = useMemo(() =>
     showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
@@ -311,7 +307,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
         {[
           ['Single-poly', singlePoly, setSinglePoly],
           ['Ring points', showRing, setShowRing],
-          ['Nodes', showNodes, setShowNodes],
           ['Graph', showGraph, setShowGraph],
         ].map(([label, val, set]) => (
           <label key={label as string} style={{ fontSize: 12 }}>
@@ -319,6 +314,9 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             {' '}{label as string}
           </label>
         ))}
+        <label style={{ fontSize: 12, cursor: 'pointer' }} onClick={() => setShowNodes((showNodes + 1) % 3)}>
+          Nodes: {['off', 'endpoints', 'all'][showNodes]}
+        </label>
         {slider('Width', widthScale, setWidthScale, 0, 3, 0.1, v => v.toFixed(1))}
         {slider('Opacity', opacity, setOpacity, 0.1, 1, 0.05, v => v.toFixed(2))}
         {slider('Wing', wing, setWing, 0, 1, 0.05, v => v.toFixed(2))}
@@ -343,19 +341,36 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           onMouseLeave={() => setTooltip(null)}
           interactiveLayerIds={[
             ...(showRing ? ['ring-edge-lines', 'ring-edge-labels', 'ring-circles'] : []),
-            ...(showNodes || editMode ? ['node-circles'] : []),
+            ...(showNodes > 0 || editMode ? ['node-circles'] : []),
           ]}
           dragPan={!dragging}
         >
           <Source id="flows" type="geojson" data={geojson}>
             <Layer id="flows-fill" type="fill" paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': opacity }} />
           </Source>
-          {showNodes && (
+          {(showNodes > 0 || editMode) && (
             <Source id="nodes" type="geojson" data={nodePoints}>
-              <Layer id="node-circles" type="circle" paint={{ 'circle-radius': 5, 'circle-color': '#e11d48', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 }} />
+              <Layer id="node-circles" type="circle"
+                paint={{
+                  'circle-radius': ['coalesce', ['get', 'radius'], 5],
+                  'circle-color': ['coalesce', ['get', 'color'], '#fff'],
+                  'circle-stroke-color': '#000',
+                  'circle-stroke-width': 1.5,
+                }} />
               <Layer id="node-labels" type="symbol"
-                layout={{ 'text-field': ['get', 'label'], 'text-size': 11, 'text-offset': [0, 1.4], 'text-anchor': 'top', 'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'] }}
-                paint={{ 'text-color': '#e11d48', 'text-halo-color': '#fff', 'text-halo-width': 1.5 }} />
+                layout={{
+                  'text-field': ['get', 'label'],
+                  'text-size': 11,
+                  'text-offset': [0, 1.4],
+                  'text-anchor': 'top',
+                  'text-font': ['Open Sans Semibold', 'Arial Unicode MS Regular'],
+                  'text-allow-overlap': true,
+                }}
+                paint={{
+                  'text-color': ['coalesce', ['get', 'labelColor'], '#fff'],
+                  'text-halo-color': 'rgba(0,0,0,0.8)',
+                  'text-halo-width': 1.5,
+                }} />
             </Source>
           )}
           {showRing && ringEdges && (

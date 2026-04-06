@@ -9,6 +9,16 @@ const { cos, sin, PI, max } = Math
 
 // --- Public types ---
 
+export interface NodeStyle {
+  color?: string
+  radius?: number
+  icon?: string          // emoji, symbol, or image URL
+  labelColor?: string
+  labelSize?: number
+  labelOffset?: [number, number]
+  hidden?: boolean
+}
+
 export interface GFlowNode {
   id: string
   pos: LatLon
@@ -17,6 +27,7 @@ export interface GFlowNode {
    *  a single output or sinks with a single input; defaults to 90. */
   bearing: number
   label?: string
+  style?: NodeStyle
 }
 
 export interface GFlowEdge {
@@ -139,7 +150,7 @@ function creaseIntersection(
 /** Resolve arrowhead params: wing/angle take precedence over arrowWing/arrowLen.
  *  angle = half-angle at the arrow tip (pointy end). */
 function resolveArrow(opts: FlowGraphOpts): { arrowWing: number; arrowLen: number } {
-  const wing = opts.wing ?? 0.3
+  const wing = opts.wing ?? 0.4
   const angle = opts.angle ?? 45
   const arrowWing = opts.arrowWing ?? (1 + 2 * wing)
   // angle = internal angle at each wingtip (between wing edge and base line)
@@ -934,4 +945,66 @@ export function renderFlowGraphSinglePoly(
   return { type: 'FeatureCollection', features }
 }
 
+export type NodeRole = 'source' | 'sink' | 'split' | 'merge' | 'through'
 
+export interface NodePointProperties {
+  id: string
+  label: string
+  role: NodeRole
+  bearing: number
+  color?: string
+  radius?: number
+  icon?: string
+  labelColor?: string
+  labelSize?: number
+  labelOffset?: [number, number]
+  hidden?: boolean
+  [k: string]: unknown
+}
+
+/** Classify each node and return a GeoJSON FeatureCollection of Points.
+ *  Each feature carries `NodePointProperties` including the node's role
+ *  (source/sink/split/merge/through) and any per-node style overrides. */
+export function renderNodes(
+  graph: FlowGraph,
+  filter?: 'all' | 'endpoints' | NodeRole[],
+): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  const inDeg = new Map<string, number>()
+  const outDeg = new Map<string, number>()
+  for (const n of graph.nodes) { inDeg.set(n.id, 0); outDeg.set(n.id, 0) }
+  for (const e of graph.edges) {
+    inDeg.set(e.to, (inDeg.get(e.to) ?? 0) + 1)
+    outDeg.set(e.from, (outDeg.get(e.from) ?? 0) + 1)
+  }
+  function classify(id: string): NodeRole {
+    const inD = inDeg.get(id) ?? 0
+    const outD = outDeg.get(id) ?? 0
+    if (inD === 0) return 'source'
+    if (outD === 0) return 'sink'
+    if (outD > 1) return 'split'
+    if (inD > 1) return 'merge'
+    return 'through'
+  }
+  const filterSet = filter === 'endpoints' ? new Set<NodeRole>(['source', 'sink'])
+    : Array.isArray(filter) ? new Set(filter)
+    : null // 'all' or undefined
+  const features: GeoJSON.Feature<GeoJSON.Point>[] = []
+  for (const n of graph.nodes) {
+    const role = classify(n.id)
+    if (filterSet && !filterSet.has(role)) continue
+    if (n.style?.hidden) continue
+    const props: NodePointProperties = {
+      id: n.id,
+      label: n.label ?? n.id,
+      role,
+      bearing: n.bearing,
+      ...n.style,
+    }
+    features.push({
+      type: 'Feature',
+      properties: props,
+      geometry: { type: 'Point', coordinates: [n.pos[1], n.pos[0]] },
+    })
+  }
+  return { type: 'FeatureCollection', features }
+}

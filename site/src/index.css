@@ -121,6 +121,20 @@ main {
   border: 1px solid var(--border);
 }
 
+.map-container .maplibregl-ctrl-attrib {
+  font-size: 9px;
+  opacity: 0.4;
+  background: transparent !important;
+}
+
+.map-container .maplibregl-ctrl-attrib.maplibregl-compact .maplibregl-ctrl-attrib-inner {
+  display: block !important;
+}
+
+.map-container .maplibregl-ctrl-attrib-button {
+  display: none !important;
+}
+
 .legend {
   display: flex;
   gap: 1rem;
