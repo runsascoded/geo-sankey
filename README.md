@@ -4,9 +4,9 @@ Pure-geometry library for geographic flow maps: width-proportional ribbon polygo
 
 Given a graph of positioned nodes and weighted edges, `geo-sankey` computes ribbon polygon geometry and outputs GeoJSON. No rendering dependencies — works with any map renderer (MapLibre, Leaflet, deck.gl, etc.).
 
-**[Live Demo →][demo]**
+**[Live Demo →][demo]** · [geo-sankey.rbw.sh][demo]
 
-| HBT Ferry Network | Simple Flow (debug overlays) |
+| [HBT] Ferry Network | Simple Flow (debug overlays) |
 |---|---|
 | ![HBT Ferry](screenshots/hbt-ferry.png) | ![Simple Flow debug](screenshots/simple-flow-debug.png) |
 
@@ -73,7 +73,7 @@ Bearings are auto-derived for nodes with a single output (toward dest) or sinks 
 
 The [demo site][demo] includes:
 
-- **HBT Ferry** — full Hudson ferry network with splits, merges, and arrowheads
+- **[HBT] Ferry** — full Hudson–Bergen–TransHudson ferry network with splits, merges, and arrowheads
 - **Simple Flow** — 6-node graph demonstrating split + merge
 - Interactive controls: width scale, opacity, wing/angle, BPL, approach, crease
 - Debug overlays: ring points/edges with tooltips, graph bezier spines, approach rectangles
@@ -112,6 +112,7 @@ The [demo site][demo] includes:
 - [transit-map] (juliuste) — SVG transit maps
 
 [demo]: https://geo-sankey.rbw.sh
+[HBT]: https://hbt.hccs.dev
 [flowmap.gl]: https://github.com/visgl/flowmap.gl
 [spatialsankey]: https://github.com/nicholasjprimianomd/spatialsankey
 [Transitive.js]: https://github.com/conveyal/transitive.js
