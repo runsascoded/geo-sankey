@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useRef } from 'react'
+import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
@@ -34,10 +34,51 @@ export interface FlowMapViewProps {
   defaults: { lat: number; lng: number; zoom: number }
 }
 
+type Selection = { type: 'node'; id: string } | { type: 'edge'; from: string; to: string } | null
+
 export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults }: FlowMapViewProps) {
   const [graph, setGraph] = useState(initialGraph)
   const [llz, setLLZ] = useLLZ(defaults)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [editMode, setEditMode] = useState(false)
+  const [selection, setSelection] = useState<Selection>(null)
+  const [dragging, setDragging] = useState<string | null>(null)
+  const [edgeSource, setEdgeSource] = useState<string | null>(null) // for edge creation
+
+  // Graph mutation helpers
+  const updateNode = useCallback((id: string, patch: Partial<{ pos: [number, number]; bearing: number; label: string }>) => {
+    setGraph(g => ({
+      ...g,
+      nodes: g.nodes.map(n => n.id === id ? { ...n, ...patch } : n),
+    }))
+  }, [])
+  const addNode = useCallback((pos: [number, number]) => {
+    const id = `n${Date.now()}`
+    setGraph(g => ({ ...g, nodes: [...g.nodes, { id, pos, bearing: 90 }] }))
+    setSelection({ type: 'node', id })
+  }, [])
+  const deleteNode = useCallback((id: string) => {
+    setGraph(g => ({
+      nodes: g.nodes.filter(n => n.id !== id),
+      edges: g.edges.filter(e => e.from !== id && e.to !== id),
+    }))
+    setSelection(null)
+  }, [])
+  const addEdge = useCallback((from: string, to: string) => {
+    if (from === to) return
+    setGraph(g => ({ ...g, edges: [...g.edges, { from, to, weight: 10 }] }))
+    setSelection({ type: 'edge', from, to })
+  }, [])
+  const updateEdge = useCallback((from: string, to: string, patch: Partial<{ weight: number }>) => {
+    setGraph(g => ({
+      ...g,
+      edges: g.edges.map(e => e.from === from && e.to === to ? { ...e, ...patch } : e),
+    }))
+  }, [])
+  const deleteEdge = useCallback((from: string, to: string) => {
+    setGraph(g => ({ ...g, edges: g.edges.filter(e => !(e.from === from && e.to === to)) }))
+    setSelection(null)
+  }, [])
   const [singlePoly, setSinglePoly] = useUrlState('sp', boolParam)
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', boolParam)
@@ -65,8 +106,14 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     approachDown: { label: 'Decrease approach', group: 'Config', defaultBindings: ['shift+a'], handler: () => setNodeApproach(Math.max(0, nodeApproach - 0.1)) },
     widthUp: { label: 'Increase width scale', group: 'Config', defaultBindings: ['w'], handler: () => setWidthScale(Math.min(3, widthScale + 0.1)) },
     widthDown: { label: 'Decrease width scale', group: 'Config', defaultBindings: ['shift+w'], handler: () => setWidthScale(Math.max(0, widthScale - 0.1)) },
-    exportScene: { label: 'Export scene (JSON)', group: 'File', defaultBindings: ['mod+e'], handler: () => exportScene() },
+    exportScene: { label: 'Export scene (JSON)', group: 'File', defaultBindings: ['mod+shift+e'], handler: () => exportScene() },
     importScene: { label: 'Import scene (JSON)', group: 'File', defaultBindings: ['mod+i'], handler: () => fileInputRef.current?.click() },
+    toggleEdit: { label: 'Toggle edit mode', group: 'Edit', defaultBindings: ['e'], handler: () => { setEditMode(m => !m); setSelection(null); setEdgeSource(null) } },
+    deleteSelected: { label: 'Delete selected', group: 'Edit', defaultBindings: ['Backspace'], handler: () => {
+      if (!selection) return
+      if (selection.type === 'node') deleteNode(selection.id)
+      else deleteEdge(selection.from, selection.to)
+    }},
   })
 
   const exportScene = useCallback(() => {
@@ -118,7 +165,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     singlePoly
       ? renderFlowGraphSinglePoly(graph, graphOpts)
       : renderFlowGraph(graph, graphOpts),
-  [llz.zoom, singlePoly, wing, angle, bezierN, nodeApproach, creaseSkip, widthScale])
+  [graph, llz.zoom, singlePoly, wing, angle, bezierN, nodeApproach, creaseSkip, widthScale])
 
   const nodePoints = useMemo(() => ({
     type: 'FeatureCollection' as const,
@@ -127,11 +174,11 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       properties: { id: n.id, label: n.label ?? n.id, bearing: n.bearing },
       geometry: { type: 'Point' as const, coordinates: [n.pos[1], n.pos[0]] },
     })),
-  }), [])
+  }), [graph])
 
   const debugGeo = useMemo(() =>
     showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
-  [showGraph, llz.zoom, wing, angle, bezierN, nodeApproach, widthScale])
+  [graph, showGraph, llz.zoom, wing, angle, bezierN, nodeApproach, widthScale])
 
   const ringPoints = useMemo(() => {
     if (!showRing || !geojson.features.length) return null
@@ -178,14 +225,73 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       const f = e.features[0], p = f.properties
       if (f.geometry?.type === 'Point') {
         const [lon, lat] = f.geometry.coordinates
-        setTooltip({ x: e.point.x, y: e.point.y, text: `pt #${p.idx}\n${lat.toFixed(6)}, ${lon.toFixed(6)}` })
-      } else {
+        const label = p.id ? `${p.label ?? p.id}` : `pt #${p.idx}`
+        setTooltip({ x: e.point.x, y: e.point.y, text: `${label}\n${lat.toFixed(6)}, ${lon.toFixed(6)}` })
+      } else if (p.bearing != null) {
         setTooltip({ x: e.point.x, y: e.point.y, text: `edge #${p.idx} bearing:${p.bearing}\u00B0\n${p.from} → ${p.to}` })
       }
     } else {
       setTooltip(null)
     }
   }, [])
+
+  // Edit mode: click handler
+  const onMapClick = useCallback((e: any) => {
+    if (!editMode) return
+    // Check if clicked on a node
+    const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
+    if (nodeFeatures?.length) {
+      const nodeId = nodeFeatures[0].properties.id
+      if (edgeSource) {
+        // Complete edge creation
+        addEdge(edgeSource, nodeId)
+        setEdgeSource(null)
+      } else {
+        setSelection({ type: 'node', id: nodeId })
+      }
+      return
+    }
+    // Clicked on empty map
+    if (edgeSource) {
+      setEdgeSource(null) // cancel edge creation
+    } else {
+      addNode([e.lngLat.lat, e.lngLat.lng])
+    }
+  }, [editMode, edgeSource, addNode, addEdge])
+
+  // Edit mode: drag with document-level listeners for reliability
+  const mapRef = useRef<any>(null)
+  const onNodeDragStart = useCallback((e: any) => {
+    if (!editMode) return
+    const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
+    if (nodeFeatures?.length) {
+      setDragging(nodeFeatures[0].properties.id)
+    }
+  }, [editMode])
+
+  useEffect(() => {
+    if (!dragging || !mapRef.current) return
+    const map = mapRef.current.getMap()
+    const canvas = map.getCanvas()
+    canvas.style.cursor = 'grabbing'
+    const onMove = (ev: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+      const lng = map.unproject([ev.clientX - rect.left, ev.clientY - rect.top]).lng
+      const lat = map.unproject([ev.clientX - rect.left, ev.clientY - rect.top]).lat
+      updateNode(dragging, { pos: [lat, lng] })
+    }
+    const onUp = () => {
+      setDragging(null)
+      canvas.style.cursor = ''
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    return () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      canvas.style.cursor = ''
+    }
+  }, [dragging, updateNode])
 
   const { theme } = useTheme()
 
@@ -220,16 +326,26 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
         {slider('BPL', bezierN, setBezierN, 1, 40, 1)}
         {slider('Approach', nodeApproach, setNodeApproach, 0, 3, 0.1, v => v.toFixed(1))}
         {slider('Crease', creaseSkip, setCreaseSkip, 0, 4, 1)}
+        {editMode && <span style={{ fontSize: 12, color: '#f59e0b', fontWeight: 600 }}>
+          EDIT{edgeSource ? ` (edge from ${edgeSource} — click dest)` : ''}
+        </span>}
       </div>
       <div className="map-container" style={{ position: 'relative' }}>
         <MapGL
+          ref={mapRef}
           initialViewState={{ longitude: llz.lng, latitude: llz.lat, zoom: llz.zoom }}
           style={{ width: '100%', height: '100%' }}
           mapStyle={MAP_STYLES[theme]}
-          onMove={onMove}
-          onMouseMove={onHover}
+          onMove={dragging ? undefined : onMove}
+          onMouseMove={dragging ? undefined : onHover}
+          onMouseDown={editMode ? onNodeDragStart : undefined}
+          onClick={editMode ? onMapClick : undefined}
           onMouseLeave={() => setTooltip(null)}
-          interactiveLayerIds={showRing ? ['ring-edge-lines', 'ring-edge-labels', 'ring-circles'] : []}
+          interactiveLayerIds={[
+            ...(showRing ? ['ring-edge-lines', 'ring-edge-labels', 'ring-circles'] : []),
+            ...(showNodes || editMode ? ['node-circles'] : []),
+          ]}
+          dragPan={!dragging}
         >
           <Source id="flows" type="geojson" data={geojson}>
             <Layer id="flows-fill" type="fill" paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': opacity }} />
@@ -274,6 +390,50 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           <div style={{ position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 10, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px', borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10 }}>{tooltip.text}</div>
         )}
       </div>
+      {editMode && selection && (() => {
+        const panelStyle: React.CSSProperties = {
+          position: 'absolute', top: 8, right: 8, background: 'var(--bg-surface, #1e1e2e)', color: 'var(--fg, #cdd6f4)',
+          border: '1px solid var(--border, #45475a)', borderRadius: 8, padding: '12px 16px', fontSize: 13, zIndex: 20, minWidth: 200,
+        }
+        const inputStyle: React.CSSProperties = { background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)', border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 6px', width: '100%', fontSize: 12 }
+        const row = (label: string, content: React.ReactNode) => (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 11, minWidth: 50, opacity: 0.7 }}>{label}</span>
+            {content}
+          </div>
+        )
+        if (selection.type === 'node') {
+          const node = graph.nodes.find(n => n.id === selection.id)
+          if (!node) return null
+          return (
+            <div style={panelStyle}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Node: {node.id}</div>
+              {row('Label', <input style={inputStyle} value={node.label ?? ''} onChange={e => updateNode(node.id, { label: e.target.value || undefined } as any)} />)}
+              {row('Bearing', <input style={inputStyle} type="number" value={node.bearing} onChange={e => updateNode(node.id, { bearing: parseFloat(e.target.value) || 0 })} />)}
+              {row('Lat', <input style={inputStyle} type="number" step="0.0001" value={node.pos[0]} onChange={e => updateNode(node.id, { pos: [parseFloat(e.target.value), node.pos[1]] })} />)}
+              {row('Lon', <input style={inputStyle} type="number" step="0.0001" value={node.pos[1]} onChange={e => updateNode(node.id, { pos: [node.pos[0], parseFloat(e.target.value)] })} />)}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button onClick={() => { setEdgeSource(node.id); setSelection(null) }} style={{ fontSize: 11 }}>Add edge from</button>
+                <button onClick={() => deleteNode(node.id)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
+              </div>
+            </div>
+          )
+        }
+        if (selection.type === 'edge') {
+          const edge = graph.edges.find(e => e.from === selection.from && e.to === selection.to)
+          if (!edge) return null
+          return (
+            <div style={panelStyle}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Edge: {edge.from} → {edge.to}</div>
+              {row('Weight', <input style={inputStyle} type="number" value={edge.weight} onChange={e => updateEdge(edge.from, edge.to, { weight: parseFloat(e.target.value) || 1 })} />)}
+              <div style={{ marginTop: 8 }}>
+                <button onClick={() => deleteEdge(edge.from, edge.to)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
+              </div>
+            </div>
+          )
+        }
+        return null
+      })()}
       <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }}
         onChange={e => { if (e.target.files?.[0]) importScene(e.target.files[0]); e.target.value = '' }} />
     </div>
