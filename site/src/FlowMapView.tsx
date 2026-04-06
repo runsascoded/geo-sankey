@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from 'react'
+import { useMemo, useCallback, useState, useRef } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
@@ -34,8 +34,10 @@ export interface FlowMapViewProps {
   defaults: { lat: number; lng: number; zoom: number }
 }
 
-export default function FlowMapView({ graph, title, description, color, pxPerWeight, refLat, defaults }: FlowMapViewProps) {
+export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults }: FlowMapViewProps) {
+  const [graph, setGraph] = useState(initialGraph)
   const [llz, setLLZ] = useLLZ(defaults)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [singlePoly, setSinglePoly] = useUrlState('sp', boolParam)
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', boolParam)
@@ -63,7 +65,48 @@ export default function FlowMapView({ graph, title, description, color, pxPerWei
     approachDown: { label: 'Decrease approach', group: 'Config', defaultBindings: ['shift+a'], handler: () => setNodeApproach(Math.max(0, nodeApproach - 0.1)) },
     widthUp: { label: 'Increase width scale', group: 'Config', defaultBindings: ['w'], handler: () => setWidthScale(Math.min(3, widthScale + 0.1)) },
     widthDown: { label: 'Decrease width scale', group: 'Config', defaultBindings: ['shift+w'], handler: () => setWidthScale(Math.max(0, widthScale - 0.1)) },
+    exportScene: { label: 'Export scene (JSON)', group: 'File', defaultBindings: ['mod+e'], handler: () => exportScene() },
+    importScene: { label: 'Import scene (JSON)', group: 'File', defaultBindings: ['mod+i'], handler: () => fileInputRef.current?.click() },
   })
+
+  const exportScene = useCallback(() => {
+    const scene = {
+      version: 1,
+      graph,
+      opts: { color, pxPerWeight, refLat, wing, angle, bezierN, nodeApproach, widthScale, creaseSkip },
+      view: { lat: llz.lat, lng: llz.lng, zoom: llz.zoom },
+    }
+    const json = JSON.stringify(scene, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${title.toLowerCase().replace(/\s+/g, '-')}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [graph, color, pxPerWeight, refLat, wing, angle, bezierN, nodeApproach, widthScale, creaseSkip, llz, title])
+
+  const importScene = useCallback((file: File) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const scene = JSON.parse(reader.result as string)
+        if (scene.graph?.nodes && scene.graph?.edges) {
+          setGraph(scene.graph)
+          if (scene.opts?.wing != null) setWing(scene.opts.wing)
+          if (scene.opts?.angle != null) setAngle(scene.opts.angle)
+          if (scene.opts?.bezierN != null) setBezierN(scene.opts.bezierN)
+          if (scene.opts?.nodeApproach != null) setNodeApproach(scene.opts.nodeApproach)
+          if (scene.opts?.widthScale != null) setWidthScale(scene.opts.widthScale)
+          if (scene.opts?.creaseSkip != null) setCreaseSkip(scene.opts.creaseSkip)
+          if (scene.view) setLLZ({ lat: scene.view.lat, lng: scene.view.lng, zoom: scene.view.zoom })
+        }
+      } catch (e) {
+        console.error('Import failed:', e)
+      }
+    }
+    reader.readAsText(file)
+  }, [])
 
   const graphOpts: FlowGraphOpts = {
     refLat, zoom: llz.zoom, color,
@@ -231,6 +274,8 @@ export default function FlowMapView({ graph, title, description, color, pxPerWei
           <div style={{ position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 10, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px', borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10 }}>{tooltip.text}</div>
         )}
       </div>
+      <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }}
+        onChange={e => { if (e.target.files?.[0]) importScene(e.target.files[0]); e.target.value = '' }} />
     </div>
   )
 }
