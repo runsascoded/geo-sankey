@@ -28,7 +28,7 @@ export default function FerryTest() {
       color="#2563eb"
       pxPerWeight={0.3}
       refLat={40.735}
-      defaults={{ lat: 40.735, lng: -74.030, zoom: 13 }}
+      defaults={{ lat: 40.7327, lng: -74.0244, zoom: 13.69 }}
     />
   )
 }

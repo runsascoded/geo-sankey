@@ -32,11 +32,12 @@ export default function HBTFerry() {
     <FlowMapView
       graph={graph}
       title="HBT Ferry Flows"
-      description="Full Hudson ferry network: Hob So splits to uptown (MT39) and downtown (Brookfield)."
+      description="Partial NY Waterway ferry network: Hoboken South splits to Midtown (MT 39th St) and Downtown (Brookfield Place)."
       color="#14B8A6"
       pxPerWeight={0.15}
       refLat={40.740}
-      defaults={{ lat: 40.740, lng: -74.020, zoom: 13 }}
+      defaults={{ lat: 40.7427, lng: -74.0142, zoom: 12.94 }}
+      defaultNodes={1}
     />
   )
 }

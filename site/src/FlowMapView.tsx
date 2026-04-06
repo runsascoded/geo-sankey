@@ -32,11 +32,12 @@ export interface FlowMapViewProps {
   pxPerWeight: number
   refLat: number
   defaults: { lat: number; lng: number; zoom: number }
+  defaultNodes?: number
 }
 
 type Selection = { type: 'node'; id: string } | { type: 'edge'; from: string; to: string } | null
 
-export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults }: FlowMapViewProps) {
+export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults, defaultNodes = 0 }: FlowMapViewProps) {
   const [graph, setGraph] = useState(initialGraph)
   const [llz, setLLZ] = useLLZ(defaults)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -79,9 +80,9 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     setGraph(g => ({ ...g, edges: g.edges.filter(e => !(e.from === from && e.to === to)) }))
     setSelection(null)
   }, [])
-  const [singlePoly, setSinglePoly] = useUrlState('sp', boolParam)
+  const [singlePoly, setSinglePoly] = useUrlState('sp', { encode: (v) => v ? undefined : '0', decode: (s) => s !== '0' })
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
-  const [showNodes, setShowNodes] = useUrlState('nodes', intParam(0))
+  const [showNodes, setShowNodes] = useUrlState('nodes', intParam(defaultNodes))
   const [showGraph, setShowGraph] = useUrlState('graph', boolParam)
   const [opacity, setOpacity] = useUrlState('o', numParam(0.5))
   const [wing, setWing] = useUrlState('w', numParam(0.4))

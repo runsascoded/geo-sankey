@@ -248,7 +248,7 @@ const scenarios: Scenario[] = [
     makeFeatures: (z) => mergeFeatures(z, { singlePoly: true }) },
 ]
 
-const DEFAULTS = { lat: CENTER_LAT, lng: CENTER_LON, zoom: 15 }
+const DEFAULTS = { lat: 40.7296, lng: -74.0328, zoom: 15.18 }
 
 export default function SeamTest() {
   const [llz, setLLZ] = useLLZ(DEFAULTS)

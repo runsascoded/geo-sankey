@@ -112,9 +112,9 @@ The [demo site][demo] includes:
 [demo]: https://geo-sankey.rbw.sh
 [nyw]: https://www.nywaterway.com
 [hbt-img]: screenshots/hbt-ferry.png
-[hbt-demo]: https://geo-sankey.rbw.sh/?ex=hbt&sp=1&o=0.85&nodes=1&llz=40.7415_-74.0180_12.60
+[hbt-demo]: https://geo-sankey.rbw.sh/?ex=hbt&o=0.85&nodes=1&llz=40.7415_-74.0180_12.60
 [sf-img]: screenshots/simple-flow-debug.png
-[sf-demo]: https://geo-sankey.rbw.sh/?ex=ferry&sp=1&o=0.75&llz=40.7350_-74.0300_13.50&ring=1&graph=1&nodes=2
+[sf-demo]: https://geo-sankey.rbw.sh/?ex=ferry&o=0.75&llz=40.7350_-74.0300_13.50&ring=1&graph=1&nodes=2
 [flowmap.gl]: https://github.com/visgl/flowmap.gl
 [spatialsankey]: https://github.com/nicholasjprimianomd/spatialsankey
 [Transitive.js]: https://github.com/conveyal/transitive.js
