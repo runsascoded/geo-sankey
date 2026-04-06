@@ -1,8 +1,12 @@
 # geo-sankey
 
-Pure-geometry library for geographic flow maps: width-proportional ribbon arrows with merge/split tree layout.
+Pure-geometry library for geographic flow maps: width-proportional ribbon polygons with merge/split layout on real maps.
 
-Given user-specified positions, bearings, and weights, `geo-sankey` computes ribbon polygon geometry and outputs GeoJSON Features. No rendering dependencies (no React, MapLibre, D3, etc.).
+Given a graph of positioned nodes and weighted edges, `geo-sankey` computes ribbon polygon geometry and outputs GeoJSON. No rendering dependencies — works with any map renderer (MapLibre, Leaflet, deck.gl, etc.).
+
+**[Live Demo →][demo]**
+
+<!-- TODO: add screenshots via scrns -->
 
 ## Install
 
@@ -13,36 +17,67 @@ pnpm add geo-sankey
 ## Usage
 
 ```ts
-import { renderFlows, type FlowTree } from 'geo-sankey'
+import { renderFlowGraphSinglePoly, type FlowGraph } from 'geo-sankey'
 
-const trees: FlowTree[] = [
-  {
-    dest: 'Downtown',
-    destPos: [40.71, -74.01],
-    root: {
-      type: 'merge',
-      pos: [40.72, -74.03],
-      bearing: 90,
-      children: [
-        { type: 'source', label: 'Terminal A', pos: [40.73, -74.04], weight: 0.6 },
-        { type: 'source', label: 'Terminal B', pos: [40.71, -74.04], weight: 0.4 },
-      ],
-    },
-  },
-]
+const graph: FlowGraph = {
+  nodes: [
+    { id: 'origin',  pos: [40.735, -74.055], bearing: 90, label: 'Origin' },
+    { id: 'split',   pos: [40.735, -74.045], bearing: 90 },
+    { id: 'merge',   pos: [40.735, -74.020], bearing: 90 },
+    { id: 'dest',    pos: [40.735, -74.000], bearing: 90, label: 'Destination' },
+    { id: 'north',   pos: [40.748, -74.038], bearing: 150, label: 'North' },
+    { id: 'south',   pos: [40.720, -74.038], bearing: 30, label: 'South' },
+  ],
+  edges: [
+    { from: 'origin', to: 'split', weight: 35 },
+    { from: 'split', to: 'merge', weight: 20 },
+    { from: 'split', to: 'south', weight: 15 },
+    { from: 'north', to: 'merge', weight: 30 },
+    { from: 'merge', to: 'dest', weight: 50 },
+  ],
+}
 
-const fc = renderFlows(trees, {
-  refLat: 40.72,
-  zoom: 12,
-  geoScale: 1,
-  color: '#3388ff',
-  key: 'my-flow',
-  pxPerWeight: w => w * 30,
-  arrowWing: 1.8,
-  arrowLen: 1.2,
+const fc = renderFlowGraphSinglePoly(graph, {
+  refLat: 40.735,
+  zoom: 14,
+  color: '#2563eb',
+  pxPerWeight: 0.3,
 })
-// fc is a GeoJSON FeatureCollection of Polygon features
+// fc is a GeoJSON FeatureCollection<Polygon>
 ```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `pxPerWeight` | — | Pixels per unit weight (controls ribbon width) |
+| `wing` | `0.3` | Arrowhead wing extension (fraction of stem width, per side) |
+| `angle` | `45` | Arrowhead wingtip angle (degrees) |
+| `bezierN` | `20` | Bezier sample count per edge (1 = straight lines) |
+| `nodeApproach` | `0.5` | Through-node approach zone (multiple of halfW) |
+| `creaseSkip` | `1` | Crease cleanup level (0 = raw, 1+ = cleaned) |
+
+### Render Modes
+
+- **`renderFlowGraphSinglePoly`** — single polygon per connected component (seamless at any opacity)
+- **`renderFlowGraph`** — one polygon per edge + arrowheads (faster, slight seams at <100% opacity)
+- **`renderFlowGraphDebug`** — debug geometry: bezier center lines, approach rectangles, arrowhead outlines
+
+### Auto-Bearing
+
+Bearings are auto-derived for nodes with a single output (toward dest) or sinks with a single input (from source). Only multi-output split nodes need explicit bearings.
+
+## Demo Site
+
+The [demo site][demo] includes:
+
+- **HBT Ferry** — full Hudson ferry network with splits, merges, and arrowheads
+- **Simple Flow** — 6-node graph demonstrating split + merge
+- Interactive controls: width scale, opacity, wing/angle, BPL, approach, crease
+- Debug overlays: ring points/edges with tooltips, graph bezier spines, approach rectangles
+- Keyboard shortcuts (`?` to view all, `Cmd+K` for command palette)
+- **Edit mode** (`e`): create/drag nodes, add edges, edit properties
+- **Export/Import** (`Cmd+Shift+E` / `Cmd+I`): save/load scenes as JSON
 
 ## Prior & Related Art
 
@@ -74,6 +109,7 @@ const fc = renderFlows(trees, {
 - [d3-tube-map] — schematic tube/metro maps
 - [transit-map] (juliuste) — SVG transit maps
 
+[demo]: https://geo-sankey.rbw.sh
 [flowmap.gl]: https://github.com/visgl/flowmap.gl
 [spatialsankey]: https://github.com/nicholasjprimianomd/spatialsankey
 [Transitive.js]: https://github.com/conveyal/transitive.js

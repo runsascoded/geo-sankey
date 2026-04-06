@@ -1,6 +1,10 @@
 {
   "name": "geo-sankey",
-  "version": "0.0.1",
+  "version": "0.1.0",
+  "description": "Pure-geometry library for geographic flow maps: width-proportional ribbon polygons with merge/split layout",
+  "homepage": "https://geo-sankey.rbw.sh",
+  "repository": "runsascoded/geo-sankey",
+  "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
