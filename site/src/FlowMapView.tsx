@@ -46,6 +46,7 @@ export default function FlowMapView({ graph, title, description, color, pxPerWei
   const [bezierN, setBezierN] = useUrlState('bn', intParam(20))
   const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(0.5))
   const [creaseSkip, setCreaseSkip] = useUrlState('cs', intParam(1))
+  const [widthScale, setWidthScale] = useUrlState('ws', numParam(1))
 
   useActions({
     toggleSinglePoly: { label: 'Toggle single-poly', group: 'Config', defaultBindings: ['s'], handler: () => setSinglePoly(!singlePoly) },
@@ -60,10 +61,13 @@ export default function FlowMapView({ graph, title, description, color, pxPerWei
     creaseDown: { label: 'Decrease crease skip', group: 'Config', defaultBindings: ['shift+c'], handler: () => setCreaseSkip(Math.max(0, creaseSkip - 1)) },
     approachUp: { label: 'Increase approach', group: 'Config', defaultBindings: ['a'], handler: () => setNodeApproach(Math.min(3, nodeApproach + 0.1)) },
     approachDown: { label: 'Decrease approach', group: 'Config', defaultBindings: ['shift+a'], handler: () => setNodeApproach(Math.max(0, nodeApproach - 0.1)) },
+    widthUp: { label: 'Increase width scale', group: 'Config', defaultBindings: ['w'], handler: () => setWidthScale(Math.min(3, widthScale + 0.1)) },
+    widthDown: { label: 'Decrease width scale', group: 'Config', defaultBindings: ['shift+w'], handler: () => setWidthScale(Math.max(0, widthScale - 0.1)) },
   })
 
   const graphOpts: FlowGraphOpts = {
-    refLat, zoom: llz.zoom, color, pxPerWeight,
+    refLat, zoom: llz.zoom, color,
+    pxPerWeight: pxPerWeight * widthScale,
     wing, angle, bezierN, nodeApproach, creaseSkip,
   }
 
@@ -71,7 +75,7 @@ export default function FlowMapView({ graph, title, description, color, pxPerWei
     singlePoly
       ? renderFlowGraphSinglePoly(graph, graphOpts)
       : renderFlowGraph(graph, graphOpts),
-  [llz.zoom, singlePoly, wing, angle, bezierN, nodeApproach, creaseSkip])
+  [llz.zoom, singlePoly, wing, angle, bezierN, nodeApproach, creaseSkip, widthScale])
 
   const nodePoints = useMemo(() => ({
     type: 'FeatureCollection' as const,
@@ -84,7 +88,7 @@ export default function FlowMapView({ graph, title, description, color, pxPerWei
 
   const debugGeo = useMemo(() =>
     showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
-  [showGraph, llz.zoom, wing, angle, bezierN, nodeApproach])
+  [showGraph, llz.zoom, wing, angle, bezierN, nodeApproach, widthScale])
 
   const ringPoints = useMemo(() => {
     if (!showRing || !geojson.features.length) return null
@@ -166,6 +170,7 @@ export default function FlowMapView({ graph, title, description, color, pxPerWei
             {' '}{label as string}
           </label>
         ))}
+        {slider('Width', widthScale, setWidthScale, 0, 3, 0.1, v => v.toFixed(1))}
         {slider('Opacity', opacity, setOpacity, 0.1, 1, 0.05, v => v.toFixed(2))}
         {slider('Wing', wing, setWing, 0, 1, 0.05, v => v.toFixed(2))}
         {slider('Angle', angle, setAngle, 1, 60, 1)}
