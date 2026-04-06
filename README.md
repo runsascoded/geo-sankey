@@ -1,14 +1,12 @@
 # geo-sankey
 
-Pure-geometry library for geographic flow maps: width-proportional ribbon polygons with merge/split layout on real maps.
-
-Given a graph of positioned nodes and weighted edges, `geo-sankey` computes ribbon polygon geometry and outputs GeoJSON. No rendering dependencies — works with any map renderer (MapLibre, Leaflet, deck.gl, etc.).
+Geometry library for geographic flow maps: width-proportional ribbon polygons with merge/split layout on real maps. Outputs GeoJSON — no rendering dependencies, works with any map renderer (MapLibre, Leaflet, deck.gl, etc.).
 
 **[Live Demo →][demo]** · [geo-sankey.rbw.sh][demo]
 
-| [HBT] Ferry Network | Simple Flow (debug overlays) |
+| [NY Waterway][nyw] ferry network (partial) | Simple Flow (debug overlays) |
 |---|---|
-| ![HBT Ferry](screenshots/hbt-ferry.png) | ![Simple Flow debug](screenshots/simple-flow-debug.png) |
+| [![HBT Ferry][hbt-img]][hbt-demo] | [![Simple Flow debug][sf-img]][sf-demo] |
 
 ## Install
 
@@ -53,7 +51,7 @@ const fc = renderFlowGraphSinglePoly(graph, {
 | Option | Default | Description |
 |--------|---------|-------------|
 | `pxPerWeight` | — | Pixels per unit weight (controls ribbon width) |
-| `wing` | `0.3` | Arrowhead wing extension (fraction of stem width, per side) |
+| `wing` | `0.4` | Arrowhead wing extension (fraction of stem width, per side) |
 | `angle` | `45` | Arrowhead wingtip angle (degrees) |
 | `bezierN` | `20` | Bezier sample count per edge (1 = straight lines) |
 | `nodeApproach` | `0.5` | Through-node approach zone (multiple of halfW) |
@@ -73,7 +71,7 @@ Bearings are auto-derived for nodes with a single output (toward dest) or sinks 
 
 The [demo site][demo] includes:
 
-- **[HBT] Ferry** — full Hudson–Bergen–TransHudson ferry network with splits, merges, and arrowheads
+- **HBT Ferry** — partial [NY Waterway][nyw] ferry network with splits, merges, and arrowheads
 - **Simple Flow** — 6-node graph demonstrating split + merge
 - Interactive controls: width scale, opacity, wing/angle, BPL, approach, crease
 - Debug overlays: ring points/edges with tooltips, graph bezier spines, approach rectangles
@@ -112,7 +110,11 @@ The [demo site][demo] includes:
 - [transit-map] (juliuste) — SVG transit maps
 
 [demo]: https://geo-sankey.rbw.sh
-[HBT]: https://hbt.hccs.dev
+[nyw]: https://www.nywaterway.com
+[hbt-img]: screenshots/hbt-ferry.png
+[hbt-demo]: https://geo-sankey.rbw.sh/?ex=hbt&sp=1&o=0.85&nodes=1&llz=40.7415_-74.0180_12.60
+[sf-img]: screenshots/simple-flow-debug.png
+[sf-demo]: https://geo-sankey.rbw.sh/?ex=ferry&sp=1&o=0.75&llz=40.7350_-74.0300_13.50&ring=1&graph=1&nodes=2
 [flowmap.gl]: https://github.com/visgl/flowmap.gl
 [spatialsankey]: https://github.com/nicholasjprimianomd/spatialsankey
 [Transitive.js]: https://github.com/conveyal/transitive.js
