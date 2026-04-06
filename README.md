@@ -6,7 +6,9 @@ Given a graph of positioned nodes and weighted edges, `geo-sankey` computes ribb
 
 **[Live Demo →][demo]**
 
-<!-- TODO: add screenshots via scrns -->
+| HBT Ferry Network | Simple Flow (debug overlays) |
+|---|---|
+| ![HBT Ferry](screenshots/hbt-ferry.png) | ![Simple Flow debug](screenshots/simple-flow-debug.png) |
 
 ## Install
 
