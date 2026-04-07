@@ -25,7 +25,7 @@ export interface GFlowNode {
   /** Bearing of throughput axis (degrees, 0=N 90=E). Inputs merge from
    *  behind, outputs split ahead. Optional — auto-derived for nodes with
    *  a single output or sinks with a single input; defaults to 90. */
-  bearing: number
+  bearing?: number
   label?: string
   style?: NodeStyle
 }
@@ -287,6 +287,9 @@ function perpProjection(pos: LatLon, ref: LatLon, bearing: number, ls: number): 
 }
 
 function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth = false): Map<string, NodeLayout> {
+  // Clone nodes to avoid mutating the input graph (auto-bearing overwrites n.bearing)
+  const nodes = graph.nodes.map(n => ({ ...n, pos: [...n.pos] as LatLon }))
+  graph = { ...graph, nodes }
   const { refLat, zoom, geoScale = 1, pxPerWeight, nodeApproach = 0.5 } = opts
   const { arrowLen } = resolveArrow(opts)
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
@@ -305,10 +308,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
 
   const ls = lngScale(refLat)
 
-  // Auto-compute bearing from edge directions.
+  // Auto-compute bearing from edge directions (only when not explicitly set).
   // Single output → toward dest. Sink with single input → from source.
   // Fallback to 90° (east) if no edges and no declared bearing.
   for (const n of graph.nodes) {
+    if (n.bearing != null) continue
     const inEs = inEdgesOf.get(n.id)!
     const outEs = outEdgesOf.get(n.id)!
     if (outEs.length === 1) {
@@ -321,6 +325,8 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
       const dLat = n.pos[0] - src.pos[0]
       const dLon = (n.pos[1] - src.pos[1]) * lngScale(refLat)
       n.bearing = Math.atan2(dLon, dLat) * 180 / PI
+    } else {
+      n.bearing = 90
     }
   }
 

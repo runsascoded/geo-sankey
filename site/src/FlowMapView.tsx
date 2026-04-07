@@ -5,11 +5,12 @@ import type { Param } from 'use-prms'
 import { useActions } from 'use-kbd'
 import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderNodes } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
+import BearingDial from './BearingDial'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-const { atan2, PI } = Math
+const { atan2, PI, round } = Math
 
 const boolParam: Param<boolean> = {
   encode: (v) => v ? '1' : undefined,
@@ -41,8 +42,14 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const [graph, setGraph] = useState(initialGraph)
   const [llz, setLLZ] = useLLZ(defaults)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [editMode, setEditMode] = useState(false)
-  const [selection, setSelection] = useState<Selection>(null)
+  const [editMode, setEditMode] = useState(() => sessionStorage.getItem('geo-sankey-edit') === '1')
+  const [selection, setSelectionRaw] = useState<Selection>(() => {
+    try { const s = sessionStorage.getItem('geo-sankey-sel'); return s ? JSON.parse(s) : null } catch { return null }
+  })
+  const setSelection = useCallback((s: Selection) => {
+    setSelectionRaw(s)
+    sessionStorage.setItem('geo-sankey-sel', s ? JSON.stringify(s) : '')
+  }, [])
   const [dragging, setDragging] = useState<string | null>(null)
   const [edgeSource, setEdgeSource] = useState<string | null>(null) // for edge creation
 
@@ -109,7 +116,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     widthDown: { label: 'Decrease width scale', group: 'Config', defaultBindings: ['shift+w'], handler: () => setWidthScale(Math.max(0, widthScale - 0.1)) },
     exportScene: { label: 'Export scene (JSON)', group: 'File', defaultBindings: ['mod+shift+e'], handler: () => exportScene() },
     importScene: { label: 'Import scene (JSON)', group: 'File', defaultBindings: ['mod+i'], handler: () => fileInputRef.current?.click() },
-    toggleEdit: { label: 'Toggle edit mode', group: 'Edit', defaultBindings: ['e'], handler: () => { setEditMode(m => !m); setSelection(null); setEdgeSource(null) } },
+    toggleEdit: { label: 'Toggle edit mode', group: 'Edit', defaultBindings: ['e'], handler: () => { setEditMode(m => { const v = !m; sessionStorage.setItem('geo-sankey-edit', v ? '1' : ''); return v }); setSelection(null); setEdgeSource(null) } },
     deleteSelected: { label: 'Delete selected', group: 'Edit', defaultBindings: ['Backspace'], handler: () => {
       if (!selection) return
       if (selection.type === 'node') deleteNode(selection.id)
@@ -405,8 +412,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
         {tooltip && (
           <div style={{ position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 10, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px', borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10 }}>{tooltip.text}</div>
         )}
-      </div>
-      {editMode && selection && (() => {
+        {editMode && selection && (() => {
         const panelStyle: React.CSSProperties = {
           position: 'absolute', top: 8, right: 8, background: 'var(--bg-surface, #1e1e2e)', color: 'var(--fg, #cdd6f4)',
           border: '1px solid var(--border, #45475a)', borderRadius: 8, padding: '12px 16px', fontSize: 13, zIndex: 20, minWidth: 200,
@@ -425,7 +431,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             <div style={panelStyle}>
               <div style={{ fontWeight: 600, marginBottom: 8 }}>Node: {node.id}</div>
               {row('Label', <input style={inputStyle} value={node.label ?? ''} onChange={e => updateNode(node.id, { label: e.target.value || undefined } as any)} />)}
-              {row('Bearing', <input style={inputStyle} type="number" value={node.bearing} onChange={e => updateNode(node.id, { bearing: parseFloat(e.target.value) || 0 })} />)}
+              {row('Bearing', <BearingDial value={round(node.bearing)} onChange={b => updateNode(node.id, { bearing: b })} />)}
               {row('Lat', <input style={inputStyle} type="number" step="0.0001" value={node.pos[0]} onChange={e => updateNode(node.id, { pos: [parseFloat(e.target.value), node.pos[1]] })} />)}
               {row('Lon', <input style={inputStyle} type="number" step="0.0001" value={node.pos[1]} onChange={e => updateNode(node.id, { pos: [node.pos[0], parseFloat(e.target.value)] })} />)}
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
@@ -449,7 +455,8 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           )
         }
         return null
-      })()}
+        })()}
+      </div>
       <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }}
         onChange={e => { if (e.target.files?.[0]) importScene(e.target.files[0]); e.target.value = '' }} />
     </div>
