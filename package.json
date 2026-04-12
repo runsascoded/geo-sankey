@@ -15,7 +15,10 @@
   "scripts": {
     "build": "vite build && tsc --emitDeclarationOnly",
     "clean": "rm -rf node_modules/.vite dist",
-    "dev": "cd site && vite"
+    "dev": "cd site && vite",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:headful": "HEADFUL=1 vitest run"
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.16",
