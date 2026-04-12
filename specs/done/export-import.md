@@ -39,22 +39,24 @@ Serialize and deserialize `FlowGraph` + rendering options as JSON for sharing, s
 - `opts`: rendering options (subset of `FlowGraphOpts`)
 - `view`: map viewport (optional, for restoring camera position)
 
-## Export
+## Shipped
 
-- Omnibar action: "Export scene" (keyboard shortcut `mod+e`)
-- Produces JSON, downloaded as `<graph-name>.json` or copied to clipboard
-- Option to export just the graph (no opts/view) for embedding
+### Export
+- Omnibar action: "Export scene" (keyboard shortcut `cmd+shift+e` / `ctrl+shift+e`)
+- Produces JSON, downloaded as `<title>.json`
 
-## Import
+### Import
+- Omnibar action: "Import scene" (keyboard shortcut `cmd+i` / `ctrl+i`)
+- File picker triggered by the omnibar action
+- Validates graph shape (nodes+edges present), replaces current graph
+- Optional opts + view in the file are applied when present
 
-- Omnibar action: "Import scene" (keyboard shortcut `mod+i`)
-- File picker or paste JSON
-- Validates schema, replaces current graph + opts + view
-- Error handling: show validation errors, don't replace on failure
+## Deferred
 
-## URL Sharing
-
-Consider encoding small graphs in the URL hash (base64-compressed JSON) for link sharing without file exchange. For large graphs, URL contains a reference to a hosted JSON file.
+- Clipboard copy/paste (`navigator.clipboard.*`)
+- Graph-only export (no opts/view) for embedding
+- URL hash encoding for link-sharing small graphs
+- Detailed validation-error surfacing (current: logs to console, silently no-ops on malformed JSON)
 
 ## Implementation Notes
 
