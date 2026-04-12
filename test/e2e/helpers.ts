@@ -60,6 +60,12 @@ export async function redoViaApi(page: Page): Promise<void> {
   await new Promise(r => setTimeout(r, 150))
 }
 
+/** Set the selection directly via the test hook. */
+export async function setSelectionsViaApi(page: Page, refs: any[]): Promise<void> {
+  await page.evaluate((r) => (window as any).__geoSankey?.setSelections?.(r), refs)
+  await new Promise(r => setTimeout(r, 150))
+}
+
 /** Project a node's LL to VIEWPORT pixel coords (accounting for canvas offset). */
 export async function projectNode(page: Page, id: string): Promise<{ x: number; y: number } | null> {
   return page.evaluate((nodeId) => {
@@ -121,7 +127,9 @@ export async function isSelected(page: Page, nodeId: string): Promise<boolean> {
     if (!stored) return false
     try {
       const s = JSON.parse(stored)
-      return s?.type === 'node' && s?.id === id
+      // Back-compat: selection may be stored as a single ref or an array of refs.
+      const arr = Array.isArray(s) ? s : s ? [s] : []
+      return arr.some((r: any) => r?.type === 'node' && r?.id === id)
     } catch { return false }
   }, nodeId)
 }

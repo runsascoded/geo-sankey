@@ -38,7 +38,15 @@ export interface FlowMapViewProps {
   defaultNodes?: number
 }
 
-type Selection = { type: 'node'; id: string } | { type: 'edge'; from: string; to: string } | null
+type SelectionRef = { type: 'node'; id: string } | { type: 'edge'; from: string; to: string }
+
+/** True if the two SelectionRefs point at the same feature. */
+function selRefEq(a: SelectionRef, b: SelectionRef): boolean {
+  if (a.type !== b.type) return false
+  if (a.type === 'node' && b.type === 'node') return a.id === b.id
+  if (a.type === 'edge' && b.type === 'edge') return a.from === b.from && a.to === b.to
+  return false
+}
 
 type GraphAction =
   | { type: 'set'; next: FlowGraph | ((g: FlowGraph) => FlowGraph); history: boolean }
@@ -86,13 +94,26 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const [llz, setLLZ] = useLLZ(defaults)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [editMode, setEditMode] = useState(() => sessionStorage.getItem('geo-sankey-edit') === '1')
-  const [selection, setSelectionRaw] = useState<Selection>(() => {
-    try { const s = sessionStorage.getItem('geo-sankey-sel'); return s ? JSON.parse(s) : null } catch { return null }
+  // Selection is an array to support shift-click multi-select. The first
+  // entry is the "primary" selection (anchors the NodeOverlay, etc.).
+  const [selections, setSelectionsRaw] = useState<SelectionRef[]>(() => {
+    try {
+      const s = sessionStorage.getItem('geo-sankey-sel')
+      if (!s) return []
+      const parsed = JSON.parse(s)
+      // Back-compat: previously stored as a single ref or null.
+      if (Array.isArray(parsed)) return parsed
+      return parsed ? [parsed] : []
+    } catch { return [] }
   })
-  const setSelection = useCallback((s: Selection) => {
-    setSelectionRaw(s)
-    sessionStorage.setItem('geo-sankey-sel', s ? JSON.stringify(s) : '')
+  const setSelections = useCallback((next: SelectionRef[] | ((prev: SelectionRef[]) => SelectionRef[])) => {
+    setSelectionsRaw(prev => {
+      const n = typeof next === 'function' ? next(prev) : next
+      sessionStorage.setItem('geo-sankey-sel', JSON.stringify(n))
+      return n
+    })
   }, [])
+  const selection = selections[0] ?? null  // primary selection — keeps existing code working
   const [dragging, setDragging] = useState<string | null>(null)
   const [edgeSource, setEdgeSource] = useState<string | null>(null) // for edge creation
 
@@ -115,30 +136,38 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const addNode = useCallback((pos: [number, number]) => {
     const id = `n${Date.now()}`
     pushGraph(g => ({ ...g, nodes: [...g.nodes, { id, pos }] }))
-    setSelection({ type: 'node', id })
-  }, [pushGraph])
+    setSelections([{ type: 'node', id }])
+  }, [pushGraph, setSelections])
   const deleteNode = useCallback((id: string) => {
     pushGraph(g => ({
       nodes: g.nodes.filter(n => n.id !== id),
       edges: g.edges.filter(e => e.from !== id && e.to !== id),
     }))
-    setSelection(null)
-  }, [pushGraph])
+    setSelections(prev => prev.filter(r => !(r.type === 'node' && r.id === id)))
+  }, [pushGraph, setSelections])
   const addEdge = useCallback((from: string, to: string) => {
     if (from === to) return
     pushGraph(g => ({ ...g, edges: [...g.edges, { from, to, weight: 10 }] }))
-    setSelection({ type: 'edge', from, to })
-  }, [pushGraph])
+    setSelections([{ type: 'edge', from, to }])
+  }, [pushGraph, setSelections])
   const updateEdge = useCallback((from: string, to: string, patch: Partial<{ weight: number }>) => {
     pushGraph(g => ({
       ...g,
       edges: g.edges.map(e => e.from === from && e.to === to ? { ...e, ...patch } : e),
     }))
   }, [pushGraph])
+  const updateEdgeStyle = useCallback((from: string, to: string, patch: Partial<{ color: string; opacity: number; widthScale: number }>) => {
+    pushGraph(g => ({
+      ...g,
+      edges: g.edges.map(e => e.from === from && e.to === to
+        ? { ...e, style: { ...e.style, ...patch } }
+        : e),
+    }))
+  }, [pushGraph])
   const deleteEdge = useCallback((from: string, to: string) => {
     pushGraph(g => ({ ...g, edges: g.edges.filter(e => !(e.from === from && e.to === to)) }))
-    setSelection(null)
-  }, [pushGraph])
+    setSelections(prev => prev.filter(r => !(r.type === 'edge' && r.from === from && r.to === to)))
+  }, [pushGraph, setSelections])
   const [singlePoly, setSinglePoly] = useUrlState('sp', { encode: (v) => v ? undefined : '0', decode: (s) => s !== '0' })
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', intParam(defaultNodes))
@@ -168,12 +197,16 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     widthDown: { label: 'Decrease width scale', group: 'Config', defaultBindings: ['shift+w'], handler: () => setWidthScale(Math.max(0, widthScale - 0.1)) },
     exportScene: { label: 'Export scene (JSON)', group: 'File', defaultBindings: ['cmd+shift+e', 'ctrl+shift+e'], handler: () => exportScene() },
     importScene: { label: 'Import scene (JSON)', group: 'File', defaultBindings: ['cmd+i', 'ctrl+i'], handler: () => fileInputRef.current?.click() },
-    toggleEdit: { label: 'Toggle edit mode', group: 'Edit', defaultBindings: ['e'], handler: () => { setEditMode(m => { const v = !m; sessionStorage.setItem('geo-sankey-edit', v ? '1' : ''); return v }); setSelection(null); setEdgeSource(null) } },
+    toggleEdit: { label: 'Toggle edit mode', group: 'Edit', defaultBindings: ['e'], handler: () => { setEditMode(m => { const v = !m; sessionStorage.setItem('geo-sankey-edit', v ? '1' : ''); return v }); setSelections([]); setEdgeSource(null) } },
     deleteSelected: { label: 'Delete selected', group: 'Edit', defaultBindings: ['Backspace', 'Delete'], handler: () => {
-      if (!selection) return
-      if (selection.type === 'node') deleteNode(selection.id)
-      else deleteEdge(selection.from, selection.to)
+      if (selections.length === 0) return
+      // Snapshot for a single undo even when deleting several
+      for (const r of selections) {
+        if (r.type === 'node') deleteNode(r.id)
+        else deleteEdge(r.from, r.to)
+      }
     }},
+    clearSelection: { label: 'Clear selection', group: 'Edit', defaultBindings: ['Escape'], handler: () => setSelections([]) },
     undo: { label: 'Undo', group: 'Edit', defaultBindings: ['cmd+z', 'ctrl+z'], handler: undo },
     redo: { label: 'Redo', group: 'Edit', defaultBindings: ['cmd+shift+z', 'ctrl+shift+z'], handler: redo },
   })
@@ -234,6 +267,36 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     return renderNodes(graph, filter)
   }, [graph, showNodes, editMode])
 
+  const selectedNodeIds = useMemo(
+    () => selections.filter(r => r.type === 'node').map(r => r.id),
+    [selections],
+  )
+
+  const selectedEdges = useMemo(() => {
+    const refs = selections.filter(r => r.type === 'edge') as Extract<SelectionRef, { type: 'edge' }>[]
+    return refs.map(r => graph.edges.find(e => e.from === r.from && e.to === r.to)!).filter(Boolean)
+  }, [selections, graph.edges])
+
+  /** Aggregate a field across selected edges: shared value, or undefined when mixed/empty. */
+  function aggEdge<K extends keyof GFlowEdge>(k: K): GFlowEdge[K] | undefined
+  function aggEdge(k: 'color' | 'opacity' | 'widthScale', fromStyle: true): string | number | undefined
+  function aggEdge<K extends keyof GFlowEdge>(k: K | 'color' | 'opacity' | 'widthScale', fromStyle?: true): any {
+    if (!selectedEdges.length) return undefined
+    const getter = fromStyle
+      ? (e: GFlowEdge) => (e.style as any)?.[k]
+      : (e: GFlowEdge) => (e as any)[k]
+    const first = getter(selectedEdges[0])
+    return selectedEdges.every(e => getter(e) === first) ? first : undefined
+  }
+
+  const applyEdgeStyle = useCallback((patch: Partial<{ color: string; opacity: number; widthScale: number }>) => {
+    for (const e of selectedEdges) updateEdgeStyle(e.from, e.to, patch)
+  }, [selectedEdges, updateEdgeStyle])
+
+  const applyEdgeWeight = useCallback((weight: number) => {
+    for (const e of selectedEdges) updateEdge(e.from, e.to, { weight })
+  }, [selectedEdges, updateEdge])
+
   const debugGeo = useMemo(() =>
     showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
   [graph, showGraph, llz.zoom, wing, angle, bezierN, nodeApproach, widthScale])
@@ -293,26 +356,46 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     }
   }, [])
 
-  // Edit mode: click = select node or deselect, double-click = add node
+  // Edit mode: click = select/replace, shift-click = toggle in set, dbl-click = add node
   const onMapClick = useCallback((e: any) => {
     if (!editMode) return
+    const shift = (e.originalEvent as MouseEvent | undefined)?.shiftKey
     const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
+    const edgeFeatures = e.features?.filter((f: any) => f.layer?.id === 'flows-fill')
+
+    const toggleOrReplace = (ref: SelectionRef) => {
+      if (shift) {
+        setSelections(prev => prev.some(r => selRefEq(r, ref))
+          ? prev.filter(r => !selRefEq(r, ref))
+          : [...prev, ref])
+      } else {
+        setSelections([ref])
+      }
+    }
+
+    // Node clicks take precedence over ribbon clicks
     if (nodeFeatures?.length) {
       const nodeId = nodeFeatures[0].properties.id
       if (edgeSource) {
         addEdge(edgeSource, nodeId)
         setEdgeSource(null)
-      } else {
-        setSelection({ type: 'node', id: nodeId })
+        return
       }
+      toggleOrReplace({ type: 'node', id: nodeId })
       return
     }
-    // Clicked empty map — deselect
-    if (edgeSource) {
-      setEdgeSource(null)
+    if (edgeFeatures?.length) {
+      const p = edgeFeatures[0].properties
+      // Only edge ribbons have from/to (through-node bodies in singlePoly don't)
+      if (p.from && p.to) {
+        toggleOrReplace({ type: 'edge', from: p.from, to: p.to })
+        return
+      }
     }
-    setSelection(null)
-  }, [editMode, edgeSource, addEdge, setSelection, setEdgeSource])
+    // Clicked empty map
+    if (edgeSource) setEdgeSource(null)
+    if (!shift) setSelections([])
+  }, [editMode, edgeSource, addEdge, setSelections, setEdgeSource])
 
   const onMapDblClick = useCallback((e: any) => {
     if (!editMode) return
@@ -341,10 +424,12 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       dispatch,
       undo,
       redo,
+      selections,
+      setSelections,
       pastLen: gs.past.length,
       futureLen: gs.future.length,
     }
-  }, [graph, gs.past.length, gs.future.length, undo, redo])
+  }, [graph, gs.past.length, gs.future.length, undo, redo, selections, setSelections])
 
   useEffect(() => {
     if (!dragging || !mapRef.current) return
@@ -422,6 +507,49 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
               </Row>
             </>,
           },
+          ...(selectedEdges.length > 0 ? [{
+            id: 'selection',
+            title: `Selection (${selections.length})`,
+            defaultOpen: true,
+            children: (() => {
+              const weight = aggEdge('weight')
+              const color = aggEdge('color', true) as string | undefined
+              const opacityVal = aggEdge('opacity', true) as number | undefined
+              const ws = aggEdge('widthScale', true) as number | undefined
+              return <>
+                <div style={{ fontSize: 10, opacity: 0.6, marginBottom: 6 }}>
+                  {selectedEdges.length} edge{selectedEdges.length === 1 ? '' : 's'} selected{selections.some(r => r.type === 'node') ? ` (+ ${selectedNodeIds.length} node${selectedNodeIds.length === 1 ? '' : 's'})` : ''}
+                </div>
+                <Row label="Weight">
+                  <input type="number" value={weight ?? ''} placeholder={weight === undefined ? 'Mixed' : ''}
+                    onChange={e => applyEdgeWeight(parseFloat(e.target.value) || 0)}
+                    style={{ width: '100%', fontSize: 12, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
+                      border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 6px' }} />
+                </Row>
+                <Row label="Color">
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <input type="color" value={color ?? '#888888'}
+                      onChange={e => applyEdgeStyle({ color: e.target.value })}
+                      style={{ width: 32, height: 24, padding: 0, border: '1px solid var(--border, #45475a)', borderRadius: 4, background: 'transparent' }} />
+                    <input type="text" value={color ?? ''} placeholder={color === undefined ? 'Mixed' : ''}
+                      onChange={e => applyEdgeStyle({ color: e.target.value })}
+                      style={{ flex: 1, fontSize: 11, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
+                        border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 6px' }} />
+                    <button onClick={() => applyEdgeStyle({ color: undefined as any })} title="Clear (use page default)"
+                      style={{ fontSize: 10, padding: '0 6px' }}>×</button>
+                  </div>
+                </Row>
+                <Row label="Opacity">
+                  <Slider value={opacityVal ?? 1} onChange={v => applyEdgeStyle({ opacity: v })}
+                    min={0} max={1} step={0.05} fmt={v => opacityVal === undefined ? 'Mix' : v.toFixed(2)} />
+                </Row>
+                <Row label="Width×">
+                  <Slider value={ws ?? 1} onChange={v => applyEdgeStyle({ widthScale: v })}
+                    min={0} max={3} step={0.1} fmt={v => ws === undefined ? 'Mix' : v.toFixed(1)} />
+                </Row>
+              </>
+            })(),
+          }] : []),
         ]} />
         <MapGL
           ref={mapRef}
@@ -437,6 +565,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           interactiveLayerIds={[
             ...(showRing ? ['ring-edge-lines', 'ring-edge-labels', 'ring-circles'] : []),
             ...(showNodes > 0 || editMode ? ['node-circles'] : []),
+            ...(editMode ? ['flows-fill'] : []),
           ]}
           dragPan={!dragging}
         >
@@ -451,19 +580,19 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
               <Layer id="node-circles" type="circle"
                 paint={{
                   'circle-radius': ['case',
-                    ['==', ['get', 'id'], selection?.type === 'node' ? selection.id : ''], 8,
+                    ['in', ['get', 'id'], ['literal', selectedNodeIds]], 8,
                     ['coalesce', ['get', 'radius'], 5],
                   ],
                   'circle-color': ['case',
-                    ['==', ['get', 'id'], selection?.type === 'node' ? selection.id : ''], '#14B8A6',
+                    ['in', ['get', 'id'], ['literal', selectedNodeIds]], '#14B8A6',
                     ['coalesce', ['get', 'color'], '#fff'],
                   ],
                   'circle-stroke-color': ['case',
-                    ['==', ['get', 'id'], selection?.type === 'node' ? selection.id : ''], '#fff',
+                    ['in', ['get', 'id'], ['literal', selectedNodeIds]], '#fff',
                     '#000',
                   ],
                   'circle-stroke-width': ['case',
-                    ['==', ['get', 'id'], selection?.type === 'node' ? selection.id : ''], 2.5,
+                    ['in', ['get', 'id'], ['literal', selectedNodeIds]], 2.5,
                     1.5,
                   ],
                 }} />
@@ -531,7 +660,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
               onRotateTransient={b => setGraph(g => ({ ...g, nodes: g.nodes.map(n => n.id === node.id ? { ...n, bearing: b } : n) }))}
               onUpdateLabel={l => updateNode(node.id, { label: l || undefined } as any)}
               onUpdatePos={p => updateNode(node.id, { pos: p })}
-              onAddEdge={() => { setEdgeSource(node.id); setSelection(null) }}
+              onAddEdge={() => { setEdgeSource(node.id); setSelections([]) }}
               onDelete={() => deleteNode(node.id)}
             />
           )

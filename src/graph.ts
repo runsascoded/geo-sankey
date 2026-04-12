@@ -590,6 +590,8 @@ export function renderFlowGraph(
         width: ePx,
         key: id,
         opacity: edge.style?.opacity ?? 1,
+        from: edge.from,
+        to: edge.to,
       }))
     }
   }

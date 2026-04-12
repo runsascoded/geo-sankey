@@ -15,6 +15,7 @@ import {
   mapDblClick,
   undoViaApi,
   redoViaApi,
+  setSelectionsViaApi,
 } from './helpers'
 
 let browser: Browser
@@ -218,3 +219,39 @@ describe('undo / redo', () => {
     expect(histAfter.past).toBe(histBefore.past + 1)
   })
 })
+
+describe('multi-select', () => {
+  it('selection state accepts an array of refs', async () => {
+    await setSelectionsViaApi(page, [{ type: 'node', id: 'origin' }, { type: 'node', id: 'split' }])
+    expect(await isSelected(page, 'origin')).toBe(true)
+    expect(await isSelected(page, 'split')).toBe(true)
+  })
+
+  it('delete with multi-select removes all selected nodes', async () => {
+    await setSelectionsViaApi(page, [{ type: 'node', id: 'origin' }, { type: 'node', id: 'split' }])
+    const before = await getNodeCount(page)
+    await page.keyboard.press('Backspace')
+    await new Promise(r => setTimeout(r, 300))
+    expect(await getNodeCount(page)).toBe(before - 2)
+  })
+
+  it('normal (no-shift) click on a node replaces the selection', async () => {
+    await setSelectionsViaApi(page, [{ type: 'node', id: 'origin' }, { type: 'node', id: 'split' }])
+    expect(await isSelected(page, 'split')).toBe(true)
+    const mergePos = (await projectNode(page, 'merge'))!
+    await page.mouse.click(mergePos.x, mergePos.y)
+    await new Promise(r => setTimeout(r, 200))
+    expect(await isSelected(page, 'origin')).toBe(false)
+    expect(await isSelected(page, 'split')).toBe(false)
+    expect(await isSelected(page, 'merge')).toBe(true)
+  })
+
+  it('Escape clears selection', async () => {
+    expect(await isSelected(page, 'origin')).toBe(true)
+    await page.keyboard.press('Escape')
+    await new Promise(r => setTimeout(r, 200))
+    expect(await isSelected(page, 'origin')).toBe(false)
+  })
+})
+
+

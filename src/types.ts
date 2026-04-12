@@ -16,6 +16,10 @@ export interface RibbonProperties {
   width: number
   key: string
   opacity: number
+  /** Edge source node id (only set on edge ribbons). */
+  from?: string
+  /** Edge destination node id (only set on edge ribbons). */
+  to?: string
 }
 
 export interface GeoOpts {
