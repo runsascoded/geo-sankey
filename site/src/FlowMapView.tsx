@@ -6,6 +6,7 @@ import { useActions } from 'use-kbd'
 import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderNodes } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import BearingDial from './BearingDial'
+import Drawer, { Row, Slider, Check } from './Drawer'
 import NodeOverlay from './NodeOverlay'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
@@ -377,44 +378,51 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
 
   const { theme } = useTheme()
 
-  const slider = (label: string, value: number, set: (v: number) => void, min: number, max: number, step: number, fmt?: (v: number) => string) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-      <label style={{ fontSize: 12 }}>{label}:</label>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={e => set(parseFloat(e.target.value))} style={{ width: 80 }} />
-      <span style={{ fontSize: 11, minWidth: 24 }}>{fmt ? fmt(value) : value}</span>
-    </div>
-  )
-
   return (
     <div className="example">
       <h2>{title}</h2>
       <p>{description}</p>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, margin: '4px 0 8px', alignItems: 'center' }}>
-        {[
-          ['Single-poly', singlePoly, setSinglePoly],
-          ['Ring points', showRing, setShowRing],
-          ['Graph', showGraph, setShowGraph],
-        ].map(([label, val, set]) => (
-          <label key={label as string} style={{ fontSize: 12 }}>
-            <input type="checkbox" checked={val as boolean} onChange={e => (set as (v: boolean) => void)(e.target.checked)} />
-            {' '}{label as string}
-          </label>
-        ))}
-        <label style={{ fontSize: 12, cursor: 'pointer' }} onClick={() => setShowNodes((showNodes + 1) % 3)}>
-          Nodes: {['off', 'endpoints', 'all'][showNodes]}
-        </label>
-        {slider('Width', widthScale, setWidthScale, 0, 3, 0.1, v => v.toFixed(1))}
-        {slider('Opacity', opacity, setOpacity, 0.1, 1, 0.05, v => v.toFixed(2))}
-        {slider('Wing', wing, setWing, 0, 1, 0.05, v => v.toFixed(2))}
-        {slider('Angle', angle, setAngle, 1, 60, 1)}
-        {slider('BPL', bezierN, setBezierN, 1, 40, 1)}
-        {slider('Approach', nodeApproach, setNodeApproach, 0, 3, 0.1, v => v.toFixed(1))}
-        {slider('Crease', creaseSkip, setCreaseSkip, 0, 4, 1)}
-        {editMode && <span style={{ fontSize: 12, color: '#f59e0b', fontWeight: 600 }}>
-          EDIT{edgeSource ? ` (edge from ${edgeSource} — click dest)` : ''}
-        </span>}
-      </div>
       <div className="map-container" style={{ position: 'relative' }}>
+        {editMode && <div style={{
+          position: 'absolute', top: 8, left: 8, zIndex: 21,
+          background: 'rgba(245, 158, 11, 0.95)', color: '#111',
+          padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+        }}>EDIT{edgeSource ? ` (edge from ${edgeSource} — click dest)` : ''}</div>}
+        <Drawer sections={[
+          {
+            id: 'defaults',
+            title: 'Page Defaults',
+            defaultOpen: true,
+            children: <>
+              <Row label="Width"><Slider value={widthScale} onChange={setWidthScale} min={0} max={3} step={0.1} fmt={v => v.toFixed(1)} /></Row>
+              <Row label="Opacity"><Slider value={opacity} onChange={setOpacity} min={0.1} max={1} step={0.05} fmt={v => v.toFixed(2)} /></Row>
+              <Row label="Wing"><Slider value={wing} onChange={setWing} min={0} max={1} step={0.05} fmt={v => v.toFixed(2)} /></Row>
+              <Row label="Angle"><Slider value={angle} onChange={setAngle} min={1} max={60} step={1} /></Row>
+              <Row label="BPL"><Slider value={bezierN} onChange={setBezierN} min={1} max={40} step={1} /></Row>
+              <Row label="Approach"><Slider value={nodeApproach} onChange={setNodeApproach} min={0} max={3} step={0.1} fmt={v => v.toFixed(1)} /></Row>
+              <Row label="Crease"><Slider value={creaseSkip} onChange={setCreaseSkip} min={0} max={4} step={1} /></Row>
+            </>,
+          },
+          {
+            id: 'view',
+            title: 'View',
+            defaultOpen: true,
+            children: <>
+              <Check label="Single-poly" checked={singlePoly} onChange={setSinglePoly} />
+              <Check label="Ring points" checked={showRing} onChange={setShowRing} />
+              <Check label="Graph overlay" checked={showGraph} onChange={setShowGraph} />
+              <Row label="Nodes">
+                <select value={showNodes} onChange={e => setShowNodes(parseInt(e.target.value))}
+                  style={{ fontSize: 12, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
+                    border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 4px' }}>
+                  <option value={0}>off</option>
+                  <option value={1}>endpoints</option>
+                  <option value={2}>all</option>
+                </select>
+              </Row>
+            </>,
+          },
+        ]} />
         <MapGL
           ref={mapRef}
           initialViewState={{ longitude: llz.lng, latitude: llz.lat, zoom: llz.zoom }}

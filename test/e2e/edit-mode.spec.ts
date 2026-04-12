@@ -51,10 +51,11 @@ describe('selection', () => {
   })
 
   it('selects a different node on click', async () => {
-    const destPos = await projectNode(page, 'dest')
-    expect(destPos).not.toBeNull()
-    await mapClick(page, destPos!.x, destPos!.y)
-    expect(await isSelected(page, 'dest')).toBe(true)
+    // Use 'split' (mid-map) — 'dest' is occluded by the right-side drawer.
+    const splitPos = await projectNode(page, 'split')
+    expect(splitPos).not.toBeNull()
+    await mapClick(page, splitPos!.x, splitPos!.y)
+    expect(await isSelected(page, 'split')).toBe(true)
   })
 })
 
