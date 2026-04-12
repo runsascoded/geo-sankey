@@ -22,4 +22,4 @@ export {
 } from './flow'
 export type { RenderFlowTreeOpts } from './flow'
 export { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderNodes } from './graph'
-export type { FlowGraph, GFlowNode, GFlowEdge, FlowGraphOpts, NodeStyle, NodeRole, NodePointProperties } from './graph'
+export type { FlowGraph, GFlowNode, GFlowEdge, FlowGraphOpts, NodeStyle, EdgeStyle, NodeRole, NodePointProperties } from './graph'

@@ -19,6 +19,15 @@ export interface NodeStyle {
   hidden?: boolean
 }
 
+export interface EdgeStyle {
+  /** Ribbon fill color for this edge (overrides `FlowGraphOpts.color`). */
+  color?: string
+  /** Per-edge opacity multiplier (0..1), composed with the page-level opacity. */
+  opacity?: number
+  /** Multiplier on `pxPerWeight` for this edge's ribbon width. Default 1. */
+  widthScale?: number
+}
+
 export interface GFlowNode {
   id: string
   pos: LatLon
@@ -34,6 +43,7 @@ export interface GFlowEdge {
   from: string
   to: string
   weight: number
+  style?: EdgeStyle
 }
 
 export interface FlowGraph {
@@ -202,6 +212,11 @@ function pxW(pxPerWeight: number | ((w: number) => number), weight: number): num
   return typeof pxPerWeight === 'number' ? weight * pxPerWeight : pxPerWeight(weight)
 }
 
+/** Edge ribbon width in px, honoring per-edge widthScale if set. */
+function edgePx(e: GFlowEdge, pxPerWeight: number | ((w: number) => number)): number {
+  return pxW(pxPerWeight, e.weight) * (e.style?.widthScale ?? 1)
+}
+
 function eid(e: GFlowEdge): string {
   return `${e.from}→${e.to}`
 }
@@ -331,8 +346,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
   }
 
   for (const n of graph.nodes) {
-    const inW = inEdgesOf.get(n.id)!.reduce((s, e) => s + e.weight, 0)
-    const outW = outEdgesOf.get(n.id)!.reduce((s, e) => s + e.weight, 0)
+    // Per-edge widthScale is applied as a weight multiplier so node
+    // geometry (face widths, slot positions) matches the rendered ribbon.
+    const scaledW = (e: GFlowEdge) => e.weight * (e.style?.widthScale ?? 1)
+    const inW = inEdgesOf.get(n.id)!.reduce((s, e) => s + scaledW(e), 0)
+    const outW = outEdgesOf.get(n.id)!.reduce((s, e) => s + scaledW(e), 0)
     const throughW = max(inW, outW)
     const halfW = pxToHalfDeg(pxW(pxPerWeight, throughW), zoom, geoScale, refLat)
     // Face corners: perpRibbon = [-sin(B), cos(B)] for ribbon convention
@@ -400,11 +418,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
       perpProjection(nodeMap.get(b.from)!.pos, n.pos, n.bearing, ls)
     )
     const throughPx = pxW(pxPerWeight, layout.throughWeight)
-    const inTotalPx = inEdges.reduce((s, e) => s + pxW(pxPerWeight, e.weight), 0)
+    const inTotalPx = inEdges.reduce((s, e) => s + edgePx(e, pxPerWeight), 0)
     const inBasePx = alignThroughWidth ? throughPx : inTotalPx
     let inCum = 0
     for (const e of inEdges) {
-      const ePx = pxW(pxPerWeight, e.weight)
+      const ePx = edgePx(e, pxPerWeight)
       const centerOffset = -inBasePx / 2 + inCum + ePx / 2
       inCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
@@ -424,11 +442,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
       perpProjection(nodeMap.get(a.to)!.pos, n.pos, n.bearing, ls) -
       perpProjection(nodeMap.get(b.to)!.pos, n.pos, n.bearing, ls)
     )
-    const outTotalPx = outEdges.reduce((s, e) => s + pxW(pxPerWeight, e.weight), 0)
+    const outTotalPx = outEdges.reduce((s, e) => s + edgePx(e, pxPerWeight), 0)
     const outBasePx = alignThroughWidth ? throughPx : outTotalPx
     let outCum = 0
     for (const e of outEdges) {
-      const ePx = pxW(pxPerWeight, e.weight)
+      const ePx = edgePx(e, pxPerWeight)
       const centerOffset = -outBasePx / 2 + outCum + ePx / 2
       outCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
@@ -561,13 +579,18 @@ export function renderFlowGraph(
     const dstLayout = layouts.get(edge.to)!
     const srcSlot = srcLayout.outSlots.get(id)!
     const dstSlot = dstLayout.inSlots.get(id)!
-    const ePx = pxW(pxPerWeight, edge.weight)
+    const ePx = edgePx(edge, pxPerWeight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
 
     const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, renderLs)
     const ring = ribbon(path, halfW, refLat)
     if (ring.length) {
-      features.push(ringFeature(ring, { color, width: ePx, key: id, opacity: 1 }))
+      features.push(ringFeature(ring, {
+        color: edge.style?.color ?? color,
+        width: ePx,
+        key: id,
+        opacity: edge.style?.opacity ?? 1,
+      }))
     }
   }
 
@@ -703,7 +726,7 @@ export function renderFlowGraphSinglePoly(
     const dstLayout = layouts.get(edge.to)!
     const srcSlot = srcLayout.outSlots.get(id)!
     const dstSlot = dstLayout.inSlots.get(id)!
-    const ePx = pxW(pxPerWeight, edge.weight)
+    const ePx = edgePx(edge, pxPerWeight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
     const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, spLs)
     edgePairs.set(id, offsetCurve(path, halfW, refLat))

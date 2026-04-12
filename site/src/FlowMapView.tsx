@@ -441,7 +441,10 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           dragPan={!dragging}
         >
           <Source id="flows" type="geojson" data={geojson}>
-            <Layer id="flows-fill" type="fill" paint={{ 'fill-color': ['get', 'color'], 'fill-opacity': opacity }} />
+            <Layer id="flows-fill" type="fill" paint={{
+              'fill-color': ['get', 'color'],
+              'fill-opacity': ['*', opacity, ['coalesce', ['get', 'opacity'], 1]],
+            }} />
           </Source>
           {(showNodes > 0 || editMode) && (
             <Source id="nodes" type="geojson" data={nodePoints}>
