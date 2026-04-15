@@ -958,6 +958,21 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                   'line-width': 2.5,
                   'line-dasharray': [2, 1.5],
                 }} />
+              <Layer id="edge-centerlines-arrow" type="symbol"
+                filter={['in', ['get', 'id'], ['literal', selectedEdgeIds]]}
+                layout={{
+                  'symbol-placement': 'line-center',
+                  'text-field': '▶',
+                  'text-size': 18,
+                  'text-rotation-alignment': 'map',
+                  'text-keep-upright': false,
+                  'text-allow-overlap': true,
+                }}
+                paint={{
+                  'text-color': '#facc15',
+                  'text-halo-color': '#000',
+                  'text-halo-width': 1.5,
+                }} />
             </Source>
           )}
           {(showNodes > 0 || editMode) && (
