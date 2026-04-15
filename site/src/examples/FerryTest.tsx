@@ -15,7 +15,7 @@ const graph: FlowGraph = {
     { from: 'split', to: 'merge', weight: 20 },
     { from: 'split', to: 'south', weight: 15 },
     { from: 'north', to: 'merge', weight: 30 },
-    { from: 'merge', to: 'dest', weight: 50 },
+    { from: 'merge', to: 'dest', weight: 'auto' },
   ],
 }
 

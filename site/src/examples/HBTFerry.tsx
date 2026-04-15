@@ -19,11 +19,11 @@ const graph: FlowGraph = {
     { from: 'hob-split', to: 'ut-merge', weight: 15 },
     { from: 'hob-split', to: 'dt-merge', weight: 15 },
     { from: 'hob-14', to: 'ut-merge', weight: 20 },
-    { from: 'ut-merge', to: 'mt-merge', weight: 35 },
+    { from: 'ut-merge', to: 'mt-merge', weight: 'auto' },
     { from: 'whk', to: 'mt-merge', weight: 30 },
-    { from: 'mt-merge', to: 'mt39', weight: 65 },
+    { from: 'mt-merge', to: 'mt39', weight: 'auto' },
     { from: 'ph', to: 'dt-merge', weight: 20 },
-    { from: 'dt-merge', to: 'bpt', weight: 35 },
+    { from: 'dt-merge', to: 'bpt', weight: 'auto' },
   ],
 }
 
