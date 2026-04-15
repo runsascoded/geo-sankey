@@ -3,7 +3,7 @@ import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
 import { useActions } from 'use-kbd'
-import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderNodes } from 'geo-sankey'
+import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import BearingDial from './BearingDial'
 import Drawer, { Row, Slider, Check } from './Drawer'
@@ -127,7 +127,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const redo = useCallback(() => dispatch({ type: 'redo' }), [])
 
   // Graph mutation helpers
-  const updateNode = useCallback((id: string, patch: Partial<{ pos: [number, number]; bearing: number; label: string }>) => {
+  const updateNode = useCallback((id: string, patch: Partial<{ pos: [number, number]; bearing: number; label: string; velocity: number }>) => {
     pushGraph(g => ({
       ...g,
       nodes: g.nodes.map(n => n.id === id ? { ...n, ...patch } : n),
@@ -272,10 +272,25 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     [selections],
   )
 
+  const selectedEdgeIds = useMemo(
+    () => selections.filter(r => r.type === 'edge').map(r => `${(r as Extract<SelectionRef, { type: 'edge' }>).from}->${(r as Extract<SelectionRef, { type: 'edge' }>).to}`),
+    [selections],
+  )
+
+  const edgeCenterlines = useMemo(
+    () => editMode ? renderEdgeCenterlines(graph, graphOpts) : null,
+    [editMode, graph, llz.zoom, bezierN, nodeApproach, widthScale],
+  )
+
   const selectedEdges = useMemo(() => {
     const refs = selections.filter(r => r.type === 'edge') as Extract<SelectionRef, { type: 'edge' }>[]
     return refs.map(r => graph.edges.find(e => e.from === r.from && e.to === r.to)!).filter(Boolean)
   }, [selections, graph.edges])
+
+  const selectedNodes = useMemo(() => {
+    const refs = selections.filter(r => r.type === 'node') as Extract<SelectionRef, { type: 'node' }>[]
+    return refs.map(r => graph.nodes.find(n => n.id === r.id)!).filter(Boolean)
+  }, [selections, graph.nodes])
 
   /** Aggregate a field across selected edges: shared value, or undefined when mixed/empty. */
   function aggEdge<K extends keyof GFlowEdge>(k: K): GFlowEdge[K] | undefined
@@ -361,6 +376,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     if (!editMode) return
     const shift = (e.originalEvent as MouseEvent | undefined)?.shiftKey
     const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
+    const centerlineFeatures = e.features?.filter((f: any) => f.layer?.id === 'edge-centerlines-hit')
     const edgeFeatures = e.features?.filter((f: any) => f.layer?.id === 'flows-fill')
 
     const toggleOrReplace = (ref: SelectionRef) => {
@@ -383,6 +399,13 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       }
       toggleOrReplace({ type: 'node', id: nodeId })
       return
+    }
+    if (centerlineFeatures?.length) {
+      const p = centerlineFeatures[0].properties
+      if (p.from && p.to) {
+        toggleOrReplace({ type: 'edge', from: p.from, to: p.to })
+        return
+      }
     }
     if (edgeFeatures?.length) {
       const p = edgeFeatures[0].properties
@@ -507,46 +530,88 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
               </Row>
             </>,
           },
-          ...(selectedEdges.length > 0 ? [{
+          ...(selections.length > 0 ? [{
             id: 'selection',
             title: `Selection (${selections.length})`,
             defaultOpen: true,
             children: (() => {
+              const singleNode = selectedNodes.length === 1 && selectedEdges.length === 0 ? selectedNodes[0] : null
               const weight = aggEdge('weight')
               const color = aggEdge('color', true) as string | undefined
               const opacityVal = aggEdge('opacity', true) as number | undefined
-              const ws = aggEdge('widthScale', true) as number | undefined
+              const inputStyle: React.CSSProperties = {
+                width: '100%', fontSize: 12, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
+                border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 6px',
+              }
               return <>
                 <div style={{ fontSize: 10, opacity: 0.6, marginBottom: 6 }}>
-                  {selectedEdges.length} edge{selectedEdges.length === 1 ? '' : 's'} selected{selections.some(r => r.type === 'node') ? ` (+ ${selectedNodeIds.length} node${selectedNodeIds.length === 1 ? '' : 's'})` : ''}
+                  {selectedNodes.length > 0 && <span>{selectedNodes.length} node{selectedNodes.length === 1 ? '' : 's'}</span>}
+                  {selectedNodes.length > 0 && selectedEdges.length > 0 && <span> · </span>}
+                  {selectedEdges.length > 0 && <span>{selectedEdges.length} edge{selectedEdges.length === 1 ? '' : 's'}</span>}
                 </div>
-                <Row label="Weight">
-                  <input type="number" value={weight ?? ''} placeholder={weight === undefined ? 'Mixed' : ''}
-                    onChange={e => applyEdgeWeight(parseFloat(e.target.value) || 0)}
-                    style={{ width: '100%', fontSize: 12, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
-                      border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 6px' }} />
-                </Row>
-                <Row label="Color">
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    <input type="color" value={color ?? '#888888'}
-                      onChange={e => applyEdgeStyle({ color: e.target.value })}
-                      style={{ width: 32, height: 24, padding: 0, border: '1px solid var(--border, #45475a)', borderRadius: 4, background: 'transparent' }} />
-                    <input type="text" value={color ?? ''} placeholder={color === undefined ? 'Mixed' : ''}
-                      onChange={e => applyEdgeStyle({ color: e.target.value })}
-                      style={{ flex: 1, fontSize: 11, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
-                        border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 6px' }} />
-                    <button onClick={() => applyEdgeStyle({ color: undefined as any })} title="Clear (use page default)"
-                      style={{ fontSize: 10, padding: '0 6px' }}>×</button>
+                {singleNode && <>
+                  <Row label="ID"><span style={{ fontSize: 11, opacity: 0.7 }}>{singleNode.id}</span></Row>
+                  <Row label="Label">
+                    <input style={inputStyle} value={singleNode.label ?? ''}
+                      onChange={e => updateNode(singleNode.id, { label: e.target.value || undefined } as any)} />
+                  </Row>
+                  <Row label="Lat">
+                    <input style={inputStyle} type="number" step="0.0001" value={singleNode.pos[0]}
+                      onChange={e => updateNode(singleNode.id, { pos: [parseFloat(e.target.value), singleNode.pos[1]] })} />
+                  </Row>
+                  <Row label="Lon">
+                    <input style={inputStyle} type="number" step="0.0001" value={singleNode.pos[1]}
+                      onChange={e => updateNode(singleNode.id, { pos: [singleNode.pos[0], parseFloat(e.target.value)] })} />
+                  </Row>
+                  <Row label="Bearing">
+                    <input style={inputStyle} type="number" step="1" value={round(singleNode.bearing ?? 90)}
+                      onChange={e => updateNode(singleNode.id, { bearing: parseFloat(e.target.value) || 0 })} />
+                  </Row>
+                  <Row label="Velocity">
+                    <div style={{ display: 'flex', gap: 4, width: '100%' }}>
+                      <input style={{ ...inputStyle, flex: 1 }} type="number" step="0.0001"
+                        value={singleNode.velocity ?? ''} placeholder="auto"
+                        onChange={e => updateNode(singleNode.id, { velocity: e.target.value === '' ? undefined : parseFloat(e.target.value) } as any)} />
+                      <button onClick={() => updateNode(singleNode.id, { velocity: undefined } as any)}
+                        title="Reset to auto" style={{ fontSize: 10, padding: '0 6px' }}>×</button>
+                    </div>
+                  </Row>
+                  <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                    <button onClick={() => { setEdgeSource(singleNode.id); setSelections([]) }} style={{ fontSize: 11 }}>Add edge</button>
+                    <button onClick={() => deleteNode(singleNode.id)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
                   </div>
-                </Row>
-                <Row label="Opacity">
-                  <Slider value={opacityVal ?? 1} onChange={v => applyEdgeStyle({ opacity: v })}
-                    min={0} max={1} step={0.05} fmt={v => opacityVal === undefined ? 'Mix' : v.toFixed(2)} />
-                </Row>
-                <Row label="Width×">
-                  <Slider value={ws ?? 1} onChange={v => applyEdgeStyle({ widthScale: v })}
-                    min={0} max={3} step={0.1} fmt={v => ws === undefined ? 'Mix' : v.toFixed(1)} />
-                </Row>
+                </>}
+                {selectedEdges.length > 0 && <>
+                  {singleNode && <div style={{ height: 8 }} />}
+                  <Row label="Weight">
+                    <input type="number" value={weight ?? ''} placeholder={weight === undefined ? 'Mixed' : ''}
+                      onChange={e => applyEdgeWeight(parseFloat(e.target.value) || 0)}
+                      style={inputStyle} />
+                  </Row>
+                  {!singlePoly && <>
+                    <Row label="Color">
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <input type="color" value={color ?? '#888888'}
+                          onChange={e => applyEdgeStyle({ color: e.target.value })}
+                          style={{ width: 32, height: 24, padding: 0, border: '1px solid var(--border, #45475a)', borderRadius: 4, background: 'transparent' }} />
+                        <input type="text" value={color ?? ''} placeholder={color === undefined ? 'Mixed' : ''}
+                          onChange={e => applyEdgeStyle({ color: e.target.value })}
+                          style={{ ...inputStyle, flex: 1, fontSize: 11 }} />
+                        <button onClick={() => applyEdgeStyle({ color: undefined as any })} title="Clear (use page default)"
+                          style={{ fontSize: 10, padding: '0 6px' }}>×</button>
+                      </div>
+                    </Row>
+                    <Row label="Opacity">
+                      <Slider value={opacityVal ?? 1} onChange={v => applyEdgeStyle({ opacity: v })}
+                        min={0} max={1} step={0.05} fmt={v => opacityVal === undefined ? 'Mix' : v.toFixed(2)} />
+                    </Row>
+                  </>}
+                  {singlePoly && (
+                    <div style={{ fontSize: 10, opacity: 0.5, marginTop: 4 }}>
+                      Per-edge color &amp; opacity require <strong>single-poly off</strong>.
+                    </div>
+                  )}
+                </>}
               </>
             })(),
           }] : []),
@@ -565,7 +630,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           interactiveLayerIds={[
             ...(showRing ? ['ring-edge-lines', 'ring-edge-labels', 'ring-circles'] : []),
             ...(showNodes > 0 || editMode ? ['node-circles'] : []),
-            ...(editMode ? ['flows-fill'] : []),
+            ...(editMode ? ['flows-fill', 'edge-centerlines-hit'] : []),
           ]}
           dragPan={!dragging}
         >
@@ -575,6 +640,29 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
               'fill-opacity': ['*', opacity, ['coalesce', ['get', 'opacity'], 1]],
             }} />
           </Source>
+          {editMode && edgeCenterlines && (
+            <Source id="edge-centerlines" type="geojson" data={edgeCenterlines}>
+              <Layer id="edge-centerlines-hit" type="line" paint={{
+                'line-color': '#000',
+                'line-opacity': 0,
+                'line-width': 16,
+              }} />
+              <Layer id="edge-centerlines-sel-halo" type="line"
+                filter={['in', ['get', 'id'], ['literal', selectedEdgeIds]]}
+                paint={{
+                  'line-color': '#000',
+                  'line-width': 5,
+                  'line-opacity': 0.7,
+                }} />
+              <Layer id="edge-centerlines-sel" type="line"
+                filter={['in', ['get', 'id'], ['literal', selectedEdgeIds]]}
+                paint={{
+                  'line-color': '#facc15',
+                  'line-width': 2.5,
+                  'line-dasharray': [2, 1.5],
+                }} />
+            </Source>
+          )}
           {(showNodes > 0 || editMode) && (
             <Source id="nodes" type="geojson" data={nodePoints}>
               <Layer id="node-circles" type="circle"
@@ -643,8 +731,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
         {tooltip && (
           <div style={{ position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 10, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px', borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10 }}>{tooltip.text}</div>
         )}
-        {editMode && selection && (() => {
-        if (selection.type === 'node') {
+        {editMode && selection && selection.type === 'node' && (() => {
           const node = graph.nodes.find(n => n.id === selection.id)
           if (!node) return null
           return (
@@ -654,39 +741,16 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
               label={node.label ?? ''}
               bearing={round(node.bearing ?? 90)}
               pos={node.pos}
+              velocity={node.velocity}
+              refLat={refLat}
               mapRef={mapRef}
-              onUpdateBearing={b => updateNode(node.id, { bearing: b })}
               onBeginRotate={() => pushHistory(graphRef.current)}
               onRotateTransient={b => setGraph(g => ({ ...g, nodes: g.nodes.map(n => n.id === node.id ? { ...n, bearing: b } : n) }))}
-              onUpdateLabel={l => updateNode(node.id, { label: l || undefined } as any)}
-              onUpdatePos={p => updateNode(node.id, { pos: p })}
-              onAddEdge={() => { setEdgeSource(node.id); setSelections([]) }}
-              onDelete={() => deleteNode(node.id)}
+              onBeginVelocity={() => pushHistory(graphRef.current)}
+              onVelocityTransient={v => setGraph(g => ({ ...g, nodes: g.nodes.map(n => n.id === node.id ? { ...n, velocity: v } : n) }))}
+              onResetVelocity={() => updateNode(node.id, { velocity: undefined } as any)}
             />
           )
-        }
-        if (selection.type === 'edge') {
-          const edge = graph.edges.find(e => e.from === selection.from && e.to === selection.to)
-          if (!edge) return null
-          const panelStyle: React.CSSProperties = {
-            position: 'absolute', top: 8, right: 8, background: 'var(--bg-surface, #1e1e2e)', color: 'var(--fg, #cdd6f4)',
-            border: '1px solid var(--border, #45475a)', borderRadius: 8, padding: '12px 16px', fontSize: 13, zIndex: 20, minWidth: 200,
-          }
-          const inputStyle: React.CSSProperties = { background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)', border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 6px', width: '100%', fontSize: 12 }
-          return (
-            <div style={panelStyle}>
-              <div style={{ fontWeight: 600, marginBottom: 8 }}>Edge: {edge.from} → {edge.to}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 11, minWidth: 50, opacity: 0.7 }}>Weight</span>
-                <input style={inputStyle} type="number" value={edge.weight} onChange={e => updateEdge(edge.from, edge.to, { weight: parseFloat(e.target.value) || 1 })} />
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <button onClick={() => deleteEdge(edge.from, edge.to)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
-              </div>
-            </div>
-          )
-        }
-        return null
         })()}
       </div>
       <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }}

@@ -35,6 +35,10 @@ export interface GFlowNode {
    *  behind, outputs split ahead. Optional — auto-derived for nodes with
    *  a single output or sinks with a single input; defaults to 90. */
   bearing?: number
+  /** Bezier control-point distance for edges at this node (G1 smoothness:
+   *  all edges leaving/arriving share one velocity). Units: scaled-degree
+   *  space used internally by `directedBezier`. Undefined → heuristic. */
+  velocity?: number
   label?: string
   style?: NodeStyle
 }
@@ -481,7 +485,7 @@ export function renderFlowGraphDebug(
     const dstLayout = layouts.get(edge.to)!
     const srcSlot = srcLayout.outSlots.get(id)!
     const dstSlot = dstLayout.inSlots.get(id)!
-    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, debugLs)
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, debugLs, srcLayout.node.velocity, dstLayout.node.velocity)
     features.push({
       type: 'Feature',
       properties: { kind: 'bezier', edge: id, weight: edge.weight },
@@ -557,6 +561,33 @@ export function renderFlowGraphDebug(
   return { type: 'FeatureCollection', features }
 }
 
+/** Return per-edge bezier centerlines as LineString features. Used by the
+ *  editor to hit-test edges even when the ribbon rendering merges them
+ *  (singlePoly mode) or a user wants an invisible selection overlay. */
+export function renderEdgeCenterlines(
+  graph: FlowGraph,
+  opts: FlowGraphOpts,
+): GeoJSON.FeatureCollection {
+  const { refLat, bezierN = 20 } = opts
+  const layouts = computeLayout(graph, opts)
+  const ls = lngScale(refLat)
+  const features: GeoJSON.Feature[] = []
+  for (const edge of graph.edges) {
+    const id = eid(edge)
+    const srcLayout = layouts.get(edge.from)!
+    const dstLayout = layouts.get(edge.to)!
+    const srcSlot = srcLayout.outSlots.get(id)!
+    const dstSlot = dstLayout.inSlots.get(id)!
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, ls, srcLayout.node.velocity, dstLayout.node.velocity)
+    features.push({
+      type: 'Feature',
+      properties: { id, from: edge.from, to: edge.to },
+      geometry: { type: 'LineString', coordinates: path.map(p => [p[1], p[0]]) },
+    })
+  }
+  return { type: 'FeatureCollection', features }
+}
+
 // --- Main render ---
 
 export function renderFlowGraph(
@@ -582,7 +613,7 @@ export function renderFlowGraph(
     const ePx = edgePx(edge, pxPerWeight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
 
-    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, renderLs)
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, renderLs, srcLayout.node.velocity, dstLayout.node.velocity)
     const ring = ribbon(path, halfW, refLat)
     if (ring.length) {
       features.push(ringFeature(ring, {
@@ -730,7 +761,7 @@ export function renderFlowGraphSinglePoly(
     const dstSlot = dstLayout.inSlots.get(id)!
     const ePx = edgePx(edge, pxPerWeight)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
-    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, spLs)
+    const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, spLs, srcLayout.node.velocity, dstLayout.node.velocity)
     edgePairs.set(id, offsetCurve(path, halfW, refLat))
   }
 

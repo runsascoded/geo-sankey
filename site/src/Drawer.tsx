@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 
 export interface DrawerSection {
   id: string
@@ -25,6 +25,23 @@ export default function Drawer({ sections, side = 'right', defaultCollapsed = fa
   const [openIds, setOpenIds] = useState<Set<string>>(() =>
     new Set(sections.filter(s => s.defaultOpen !== false).map(s => s.id))
   )
+  const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set(sections.map(s => s.id)))
+  // Auto-open newly-appearing sections that default to open (e.g. Selection
+  // appears on first selection — it should be open, not collapsed).
+  useEffect(() => {
+    const newlyAdded = sections.filter(s => !seenIds.has(s.id))
+    if (newlyAdded.length === 0) return
+    setSeenIds(prev => {
+      const next = new Set(prev)
+      for (const s of sections) next.add(s.id)
+      return next
+    })
+    setOpenIds(prev => {
+      const next = new Set(prev)
+      for (const s of newlyAdded) if (s.defaultOpen !== false) next.add(s.id)
+      return next
+    })
+  }, [sections, seenIds])
   const toggle = (id: string) => setOpenIds(prev => {
     const next = new Set(prev)
     if (next.has(id)) next.delete(id); else next.add(id)

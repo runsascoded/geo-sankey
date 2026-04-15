@@ -54,7 +54,9 @@ export function sBezier(start: LatLon, end: LatLon): LatLon[] {
 }
 
 /** Bezier with explicit departure and/or arrival bearings (degrees, 0=N 90=E).
- *  Undefined bearings default to east (90°). */
+ *  Undefined bearings default to east (90°). `departVelocity`/`arriveVelocity`
+ *  override the default control-point distance (in scaled-degree space used
+ *  internally by this function — same units as the returned path). */
 export function directedBezier(
   start: LatLon,
   end: LatLon,
@@ -62,6 +64,8 @@ export function directedBezier(
   arriveBearing?: number,
   n = 20,
   lngScaleFactor = 1,
+  departVelocity?: number,
+  arriveVelocity?: number,
 ): LatLon[] {
   // Work in Mercator-like screen space (lon, lat*ls) where angles
   // are preserved. Scale lat by ls so index 0 = lat*ls ≈ screen y.
@@ -76,12 +80,16 @@ export function directedBezier(
 
   const dRad = (departBearing ?? 90) * PI / 180
   const dDiff = Math.abs(((((departBearing ?? 90) - pathAngle) % 360) + 540) % 360 - 180)
-  const dSpan = max(dist * (dDiff < 90 ? 0.4 : 0.2), 0.001)
+  const dSpan = departVelocity != null
+    ? max(departVelocity, 0.001)
+    : max(dist * (dDiff < 90 ? 0.4 : 0.2), 0.001)
   const cp1: LatLon = [sStart[0] + cos(dRad) * dSpan, sStart[1] + sin(dRad) * dSpan]
 
   const aRad = (arriveBearing ?? 90) * PI / 180
   const aDiff = Math.abs(((((arriveBearing ?? 90) - pathAngle) % 360) + 540) % 360 - 180)
-  const aSpan = max(dist * (aDiff < 90 ? 0.4 : 0.2), 0.001)
+  const aSpan = arriveVelocity != null
+    ? max(arriveVelocity, 0.001)
+    : max(dist * (aDiff < 90 ? 0.4 : 0.2), 0.001)
   const cp2: LatLon = [sEnd[0] - cos(aRad) * aSpan, sEnd[1] - sin(aRad) * aSpan]
 
   const scaled = cubicBezier(sStart, cp1, cp2, sEnd, n)

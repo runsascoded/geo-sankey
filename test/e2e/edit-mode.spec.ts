@@ -9,6 +9,10 @@ import {
   projectNode,
   getSelectedBearing,
   getRotHandlePos,
+  getVelHandlePos,
+  getEdgeMidpoint,
+  getNodeVelocity,
+  getSelections,
   getSelectedLabel,
   isSelected,
   mapClick,
@@ -251,6 +255,52 @@ describe('multi-select', () => {
     await page.keyboard.press('Escape')
     await new Promise(r => setTimeout(r, 200))
     expect(await isSelected(page, 'origin')).toBe(false)
+  })
+})
+
+describe('edge selection', () => {
+  it('click on edge centerline selects that edge', async () => {
+    // Start with no selection so any edge click produces a single edge sel.
+    await setSelectionsViaApi(page, [])
+    const mid = await getEdgeMidpoint(page, 'origin', 'split')
+    expect(mid).not.toBeNull()
+    await mapClick(page, mid!.x, mid!.y)
+    const sel = await getSelections(page)
+    expect(sel).toEqual([{ type: 'edge', from: 'origin', to: 'split' }])
+  })
+
+  it('clicking an edge replaces a node selection (no shift)', async () => {
+    expect(await isSelected(page, 'origin')).toBe(true)
+    // Use split→merge so the midpoint is far from any currently-selected node.
+    const mid = (await getEdgeMidpoint(page, 'split', 'merge'))!
+    await mapClick(page, mid.x, mid.y)
+    const sel = await getSelections(page)
+    expect(sel).toEqual([{ type: 'edge', from: 'split', to: 'merge' }])
+  })
+})
+
+describe('velocity handle', () => {
+  it('drag sets node.velocity and produces one history entry', async () => {
+    expect(await getNodeVelocity(page, 'origin')).toBeUndefined()
+    const histBefore = await getHistoryLengths(page)
+    const handle = (await getVelHandlePos(page))!
+    expect(handle).not.toBeNull()
+    // Drag handle 40px further along (same direction) and release
+    await page.mouse.move(handle.x, handle.y)
+    await page.mouse.down()
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(handle.x + 4 * i, handle.y, { steps: 1 })
+    }
+    await page.mouse.up()
+    await new Promise(r => setTimeout(r, 300))
+    const vel = await getNodeVelocity(page, 'origin')
+    expect(typeof vel).toBe('number')
+    expect(vel).toBeGreaterThan(0)
+    const histAfter = await getHistoryLengths(page)
+    expect(histAfter.past).toBe(histBefore.past + 1)
+    // Undo should clear the velocity back to undefined
+    await undoViaApi(page)
+    expect(await getNodeVelocity(page, 'origin')).toBeUndefined()
   })
 })
 

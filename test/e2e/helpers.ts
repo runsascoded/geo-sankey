@@ -106,6 +106,51 @@ export async function getRotHandlePos(page: Page): Promise<{ x: number; y: numbe
   })
 }
 
+/** Velocity handle is the diamond-shaped draggable (rotate(45deg)). */
+export async function getVelHandlePos(page: Page): Promise<{ x: number; y: number } | null> {
+  return page.evaluate(() => {
+    const divs = document.querySelectorAll('.map-container div[style]')
+    for (const d of divs) {
+      const style = (d as HTMLElement).style
+      if (style.cursor === 'grab' && style.transform.includes('rotate(45deg)')) {
+        const r = (d as HTMLElement).getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+      }
+    }
+    return null
+  })
+}
+
+/** Midpoint of the first edge's centerline in viewport pixel coords. */
+export async function getEdgeMidpoint(page: Page, from: string, to: string): Promise<{ x: number; y: number } | null> {
+  return page.evaluate((f, t) => {
+    const gs = (window as any).__geoSankey
+    const map = gs?.mapRef?.current?.getMap?.()
+    if (!map) return null
+    const src = map.getSource('edge-centerlines') as any
+    if (!src?._data) return null
+    const feat = src._data.features.find((x: any) => x.properties?.from === f && x.properties?.to === t)
+    if (!feat) return null
+    const coords = feat.geometry.coordinates as [number, number][]
+    const mid = coords[Math.floor(coords.length / 2)]
+    const pt = map.project(mid as any)
+    const rect = (map.getCanvas() as HTMLCanvasElement).getBoundingClientRect()
+    return { x: pt.x + rect.left, y: pt.y + rect.top }
+  }, from, to)
+}
+
+export async function getSelections(page: Page): Promise<any[]> {
+  return page.evaluate(() => (window as any).__geoSankey?.selections ?? [])
+}
+
+export async function getNodeVelocity(page: Page, id: string): Promise<number | null | undefined> {
+  return page.evaluate((nodeId) => {
+    const g = (window as any).__geoSankey?.graph
+    const n = g?.nodes?.find((x: any) => x.id === nodeId)
+    return n?.velocity
+  }, id)
+}
+
 export async function getSelectedLabel(page: Page): Promise<string | null> {
   return page.evaluate(() => {
     // Find the node-label overlay div (non-expanded form shows label text)
