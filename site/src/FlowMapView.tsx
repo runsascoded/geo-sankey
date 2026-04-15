@@ -8,6 +8,7 @@ import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import BearingDial from './BearingDial'
 import Drawer, { Row, Slider, Check } from './Drawer'
 import NodeOverlay from './NodeOverlay'
+import { sceneToTS, parseScene, type Scene } from './scene'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -204,6 +205,8 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     widthDown: { label: 'Decrease width scale', group: 'Config', defaultBindings: ['shift+w'], handler: () => setWidthScale(Math.max(0, widthScale - 0.1)) },
     exportScene: { label: 'Export scene (JSON)', group: 'File', defaultBindings: ['cmd+shift+e', 'ctrl+shift+e'], handler: () => exportScene() },
     importScene: { label: 'Import scene (JSON)', group: 'File', defaultBindings: ['cmd+i', 'ctrl+i'], handler: () => fileInputRef.current?.click() },
+    copySceneTS: { label: 'Copy scene as TS literal', group: 'File', defaultBindings: ['cmd+shift+c', 'ctrl+shift+c'], handler: () => copySceneAsTS() },
+    pasteScene: { label: 'Paste scene (TS / JSON)', group: 'File', defaultBindings: ['cmd+shift+v', 'ctrl+shift+v'], handler: () => setPasteOpen(true) },
     toggleEdit: { label: 'Toggle edit mode', group: 'Edit', defaultBindings: ['e'], handler: () => { setEditMode(m => { const v = !m; sessionStorage.setItem('geo-sankey-edit', v ? '1' : ''); return v }); setSelections([]); setEdgeSource(null) } },
     deleteSelected: { label: 'Delete selected', group: 'Edit', defaultBindings: ['Backspace', 'Delete'], handler: () => {
       if (selections.length === 0) return
@@ -218,14 +221,15 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     redo: { label: 'Redo', group: 'Edit', defaultBindings: ['cmd+shift+z', 'ctrl+shift+z'], handler: redo },
   })
 
+  const buildScene = useCallback((): Scene => ({
+    version: 1,
+    graph,
+    opts: { color, pxPerWeight, refLat, wing, angle, bezierN, nodeApproach, widthScale, creaseSkip },
+    view: { lat: llz.lat, lng: llz.lng, zoom: llz.zoom },
+  }), [graph, color, pxPerWeight, refLat, wing, angle, bezierN, nodeApproach, widthScale, creaseSkip, llz])
+
   const exportScene = useCallback(() => {
-    const scene = {
-      version: 1,
-      graph,
-      opts: { color, pxPerWeight, refLat, wing, angle, bezierN, nodeApproach, widthScale, creaseSkip },
-      view: { lat: llz.lat, lng: llz.lng, zoom: llz.zoom },
-    }
-    const json = JSON.stringify(scene, null, 2)
+    const json = JSON.stringify(buildScene(), null, 2)
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -233,7 +237,47 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     a.download = `${title.toLowerCase().replace(/\s+/g, '-')}.json`
     a.click()
     URL.revokeObjectURL(url)
-  }, [graph, color, pxPerWeight, refLat, wing, angle, bezierN, nodeApproach, widthScale, creaseSkip, llz, title])
+  }, [buildScene, title])
+
+  const [copyHint, setCopyHint] = useState<string | null>(null)
+  const copySceneAsTS = useCallback(async () => {
+    const ts = sceneToTS(buildScene())
+    try {
+      await navigator.clipboard.writeText(ts)
+      setCopyHint('Copied scene as TS literal')
+    } catch (e) {
+      setCopyHint(`Copy failed: ${e}`)
+    }
+    setTimeout(() => setCopyHint(null), 1800)
+  }, [buildScene])
+
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteText, setPasteText] = useState('')
+  const [pasteError, setPasteError] = useState<string | null>(null)
+  const applyPastedScene = useCallback(() => {
+    setPasteError(null)
+    let scene: Scene
+    try {
+      scene = parseScene(pasteText)
+    } catch (e) {
+      setPasteError(String(e instanceof Error ? e.message : e))
+      return
+    }
+    if (!scene.graph?.nodes || !scene.graph?.edges) {
+      setPasteError('Missing graph.nodes / graph.edges')
+      return
+    }
+    pushGraph(scene.graph)
+    if (scene.opts?.wing != null) setWing(scene.opts.wing)
+    if (scene.opts?.angle != null) setAngle(scene.opts.angle)
+    if (scene.opts?.bezierN != null) setBezierN(scene.opts.bezierN)
+    if (scene.opts?.nodeApproach != null) setNodeApproach(scene.opts.nodeApproach)
+    if (scene.opts?.widthScale != null) setWidthScale(scene.opts.widthScale)
+    if (scene.opts?.creaseSkip != null) setCreaseSkip(scene.opts.creaseSkip)
+    if (scene.view) setLLZ({ lat: scene.view.lat, lng: scene.view.lng, zoom: scene.view.zoom })
+    setPasteOpen(false)
+    setPasteText('')
+  }, [pasteText, pushGraph, setWing, setAngle, setBezierN, setNodeApproach, setWidthScale, setCreaseSkip, setLLZ])
 
   const importScene = useCallback((file: File) => {
     const reader = new FileReader()
@@ -778,6 +822,51 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       </div>
       <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }}
         onChange={e => { if (e.target.files?.[0]) importScene(e.target.files[0]); e.target.value = '' }} />
+      {copyHint && (
+        <div style={{
+          position: 'fixed', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+          background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '8px 14px',
+          borderRadius: 6, fontSize: 12, zIndex: 50,
+        }}>{copyHint}</div>
+      )}
+      {pasteOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 40,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={() => setPasteOpen(false)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: 'var(--bg-surface, #1e1e2e)', color: 'var(--fg, #cdd6f4)',
+            border: '1px solid var(--border, #45475a)', borderRadius: 8,
+            padding: 16, width: 'min(720px, 90vw)', maxHeight: '80vh',
+            display: 'flex', flexDirection: 'column', gap: 10,
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>Paste scene (JSON or TS literal)</div>
+            <textarea
+              autoFocus
+              value={pasteText}
+              onChange={e => setPasteText(e.target.value)}
+              placeholder={'{ "graph": { "nodes": [...], "edges": [...] } }\n\nor a TS literal:\n{ graph: { nodes: [{ id: \'a\', pos: [40.7, -74.0] }], edges: [] } }'}
+              style={{
+                flex: 1, minHeight: 320, fontFamily: 'monospace', fontSize: 12,
+                background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
+                border: '1px solid var(--border, #45475a)', borderRadius: 4,
+                padding: 8, resize: 'vertical',
+              }}
+            />
+            {pasteError && (
+              <div style={{ color: '#ef4444', fontSize: 11 }}>{pasteError}</div>
+            )}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => { setPasteOpen(false); setPasteText(''); setPasteError(null) }}
+                style={{ fontSize: 12, padding: '4px 10px' }}>Cancel</button>
+              <button onClick={applyPastedScene}
+                style={{ fontSize: 12, padding: '4px 10px', background: '#14B8A6', color: '#000', fontWeight: 600 }}>
+                Load
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
