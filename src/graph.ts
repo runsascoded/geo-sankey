@@ -1,5 +1,5 @@
 import type { LatLon } from './types'
-import { lngScale, pxToHalfDeg, pxToDeg } from './geo'
+import { lngScale, pxToHalfDeg, pxToDeg, degPerPxZ12 } from './geo'
 import { directedBezier, perpAt } from './path'
 import { ribbon, ribbonArrow, ribbonEdges, ribbonArrowEdges, ringFeature } from './ribbon'
 import type { RibbonArrowOpts } from './ribbon'
@@ -60,7 +60,11 @@ export interface FlowGraphOpts {
   refLat: number
   zoom: number
   geoScale?: number
+  /** Pixels of ribbon width per unit weight. Ignored if `mPerWeight` is set. */
   pxPerWeight: number | ((w: number) => number)
+  /** Real-world meters per unit weight; overrides `pxPerWeight` when set,
+   *  computing px-per-frame from the current zoom + `refLat`. */
+  mPerWeight?: number
   color: string
   arrowWing?: number        // wing width multiplier (derived from wing+angle if not set)
   arrowLen?: number         // arrow length multiplier (derived from wing+angle if not set)
@@ -217,6 +221,18 @@ function pxW(pxPerWeight: number | ((w: number) => number), weight: number): num
   return typeof pxPerWeight === 'number' ? weight * pxPerWeight : pxPerWeight(weight)
 }
 
+const M_PER_DEG_LAT = 111_320
+
+/** If `mPerWeight` is set, derive the equivalent `pxPerWeight` for the
+ *  current zoom + refLat (web-mercator scaling). Otherwise return the
+ *  caller-provided `pxPerWeight`. */
+function effectivePxPerWeight(opts: FlowGraphOpts): number | ((w: number) => number) {
+  if (opts.mPerWeight == null) return opts.pxPerWeight
+  // px/m at zoom z = 2^(z-12) / (degPerPxZ12 * M_PER_DEG_LAT)
+  const pxPerMeter = Math.pow(2, opts.zoom - 12) / (degPerPxZ12(opts.refLat) * M_PER_DEG_LAT)
+  return opts.mPerWeight * pxPerMeter
+}
+
 /** Edge ribbon width in px, honoring per-edge widthScale if set. */
 function edgePx(e: GFlowEdge, pxPerWeight: number | ((w: number) => number), weights: Map<string, number>): number {
   return pxW(pxPerWeight, weights.get(eid(e)) ?? 0) * (e.style?.widthScale ?? 1)
@@ -361,7 +377,8 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
   // Clone nodes to avoid mutating the input graph (auto-bearing overwrites n.bearing)
   const nodes = graph.nodes.map(n => ({ ...n, pos: [...n.pos] as LatLon }))
   graph = { ...graph, nodes }
-  const { refLat, zoom, geoScale = 1, pxPerWeight, nodeApproach = 0.5 } = opts
+  const { refLat, zoom, geoScale = 1, nodeApproach = 0.5 } = opts
+  const pxPerWeight = effectivePxPerWeight(opts)
   const { arrowLen } = resolveArrow(opts)
   const weights = resolveEdgeWeights(graph)
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
@@ -648,9 +665,10 @@ export function renderFlowGraph(
   opts: FlowGraphOpts,
 ): GeoJSON.FeatureCollection {
   const {
-    refLat, zoom, geoScale = 1, pxPerWeight, color,
+    refLat, zoom, geoScale = 1, color,
     minArrowWingPx = 0, bezierN = 20,
   } = opts
+  const pxPerWeight = effectivePxPerWeight(opts)
   const { arrowWing, arrowLen } = resolveArrow(opts)
   const { layouts, weights } = computeLayout(graph, opts)
   const features: GeoJSON.Feature[] = []
@@ -783,11 +801,12 @@ export function renderFlowGraphSinglePoly(
   opts: FlowGraphOpts,
 ): GeoJSON.FeatureCollection {
   const {
-    refLat, zoom, geoScale = 1, pxPerWeight, color,
+    refLat, zoom, geoScale = 1, color,
     minArrowWingPx = 0,
     plugBearingDeg = 1, plugFraction = 0.3, creaseSkip = 1,
     bezierN = 20,
   } = opts
+  const pxPerWeight = effectivePxPerWeight(opts)
   const { arrowWing, arrowLen } = resolveArrow(opts)
   const { layouts, weights } = computeLayout(graph, opts, true) // align slots to through-width
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))

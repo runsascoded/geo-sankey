@@ -231,6 +231,14 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(0.5))
   const [creaseSkip, setCreaseSkip] = useUrlState('cs', intParam(1))
   const [widthScale, setWidthScale] = useUrlState('ws', numParam(1))
+  const [widthUnit, setWidthUnit] = useUrlState<'px' | 'm'>('wu', {
+    encode: v => v === 'px' ? undefined : v,
+    decode: s => s === 'm' ? 'm' : 'px',
+  })
+  // Default m/weight chosen so that at the example's default zoom the
+  // ribbon is roughly the same width as the px-mode default — gives a
+  // sensible starting point when the user toggles units.
+  const [mPerWeight, setMPerWeight] = useUrlState('mpw', numParam(2))
 
   useActions({
     toggleSinglePoly: { label: 'Toggle single-poly', group: 'Config', defaultBindings: ['s'], handler: () => setSinglePoly(!singlePoly) },
@@ -349,6 +357,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const graphOpts: FlowGraphOpts = {
     refLat, zoom: llz.zoom, color,
     pxPerWeight: pxPerWeight * widthScale,
+    ...(widthUnit === 'm' ? { mPerWeight: mPerWeight * widthScale } : {}),
     wing, angle, bezierN, nodeApproach, creaseSkip,
   }
 
@@ -356,7 +365,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     singlePoly
       ? renderFlowGraphSinglePoly(graph, graphOpts)
       : renderFlowGraph(graph, graphOpts),
-  [graph, llz.zoom, singlePoly, wing, angle, bezierN, nodeApproach, creaseSkip, widthScale])
+  [graph, llz.zoom, singlePoly, wing, angle, bezierN, nodeApproach, creaseSkip, widthScale, widthUnit, mPerWeight])
 
   const nodePoints = useMemo(() => {
     const filter = showNodes === 2 || editMode ? 'all' as const : showNodes === 1 ? 'endpoints' as const : 'all' as const
@@ -375,7 +384,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
 
   const edgeCenterlines = useMemo(
     () => editMode ? renderEdgeCenterlines(graph, graphOpts) : null,
-    [editMode, graph, llz.zoom, bezierN, nodeApproach, widthScale],
+    [editMode, graph, llz.zoom, bezierN, nodeApproach, widthScale, widthUnit, mPerWeight],
   )
 
   const selectedEdges = useMemo(() => {
@@ -650,7 +659,20 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             title: 'Page Defaults',
             defaultOpen: true,
             children: <>
-              <Row label="Width"><Slider value={widthScale} onChange={setWidthScale} min={0} max={3} step={0.1} fmt={v => v.toFixed(1)} /></Row>
+              <Row label="Width">
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center', width: '100%' }}>
+                  <select value={widthUnit} onChange={e => setWidthUnit(e.target.value as 'px' | 'm')}
+                    style={{ fontSize: 11, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
+                      border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 4px' }}>
+                    <option value="px">px×</option>
+                    <option value="m">m</option>
+                  </select>
+                  {widthUnit === 'px'
+                    ? <Slider value={widthScale} onChange={setWidthScale} min={0} max={3} step={0.1} fmt={v => v.toFixed(1)} />
+                    : <Slider value={mPerWeight} onChange={setMPerWeight} min={0.1} max={50} step={0.1} fmt={v => `${v.toFixed(1)}m`} />
+                  }
+                </div>
+              </Row>
               <Row label="Opacity"><Slider value={opacity} onChange={setOpacity} min={0.1} max={1} step={0.05} fmt={v => v.toFixed(2)} /></Row>
               <Row label="Wing"><Slider value={wing} onChange={setWing} min={0} max={1} step={0.05} fmt={v => v.toFixed(2)} /></Row>
               <Row label="Angle"><Slider value={angle} onChange={setAngle} min={1} max={60} step={1} /></Row>
