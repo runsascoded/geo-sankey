@@ -93,6 +93,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     dispatch({ type: 'set', next, history: false })
   }, [])
   const [llz, setLLZ] = useLLZ(defaults)
+  const mapRef = useRef<any>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [editMode, setEditMode] = useState(() => sessionStorage.getItem('geo-sankey-edit') === '1')
   // Selection is an array to support shift-click multi-select. The first
@@ -220,6 +221,19 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     pushGraph(g => ({ ...g, edges: g.edges.filter(e => !(e.from === from && e.to === to)) }))
     setSelections(prev => prev.filter(r => !(r.type === 'edge' && r.from === from && r.to === to)))
   }, [pushGraph, setSelections])
+  const reverseEdge = useCallback((from: string, to: string) => {
+    pushGraph(g => {
+      // Refuse if the reverse already exists (would conflict).
+      if (g.edges.some(e => e.from === to && e.to === from)) return g
+      return {
+        ...g,
+        edges: g.edges.map(e => e.from === from && e.to === to
+          ? { ...e, from: to, to: from }
+          : e),
+      }
+    })
+    setSelections([{ type: 'edge', from: to, to: from }])
+  }, [pushGraph, setSelections])
   const [singlePoly, setSinglePoly] = useUrlState('sp', { encode: (v) => v ? undefined : '0', decode: (s) => s !== '0' })
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', intParam(defaultNodes))
@@ -307,6 +321,24 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const [pasteError, setPasteError] = useState<string | null>(null)
+  const fitToGraph = useCallback((g: FlowGraph) => {
+    if (!g.nodes.length) return
+    const map = mapRef.current?.getMap?.()
+    if (!map) return
+    let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity
+    for (const n of g.nodes) {
+      if (n.pos[0] < minLat) minLat = n.pos[0]
+      if (n.pos[0] > maxLat) maxLat = n.pos[0]
+      if (n.pos[1] < minLon) minLon = n.pos[1]
+      if (n.pos[1] > maxLon) maxLon = n.pos[1]
+    }
+    if (minLat === maxLat && minLon === maxLon) {
+      map.easeTo({ center: [minLon, minLat], zoom: 13, duration: 400 })
+      return
+    }
+    map.fitBounds([[minLon, minLat], [maxLon, maxLat]], { padding: 80, duration: 400 })
+  }, [])
+
   const applyPastedScene = useCallback(() => {
     setPasteError(null)
     let scene: Scene
@@ -327,10 +359,15 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     if (scene.opts?.nodeApproach != null) setNodeApproach(scene.opts.nodeApproach)
     if (scene.opts?.widthScale != null) setWidthScale(scene.opts.widthScale)
     if (scene.opts?.creaseSkip != null) setCreaseSkip(scene.opts.creaseSkip)
-    if (scene.view) setLLZ({ lat: scene.view.lat, lng: scene.view.lng, zoom: scene.view.zoom })
+    if (scene.view) {
+      setLLZ({ lat: scene.view.lat, lng: scene.view.lng, zoom: scene.view.zoom })
+    } else {
+      // No view stored — fit to the pasted graph's bounding box.
+      setTimeout(() => fitToGraph(scene.graph), 50)
+    }
     setPasteOpen(false)
     setPasteText('')
-  }, [pasteText, pushGraph, setWing, setAngle, setBezierN, setNodeApproach, setWidthScale, setCreaseSkip, setLLZ])
+  }, [pasteText, pushGraph, setWing, setAngle, setBezierN, setNodeApproach, setWidthScale, setCreaseSkip, setLLZ, fitToGraph])
 
   const importScene = useCallback((file: File) => {
     const reader = new FileReader()
@@ -569,7 +606,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   }, [editMode, addNode])
 
   // Edit mode: drag with document-level listeners for reliability
-  const mapRef = useRef<any>(null)
   const onNodeDragStart = useCallback((e: any) => {
     if (!editMode) return
     const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
@@ -826,6 +862,21 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                       Per-edge color &amp; opacity require <strong>single-poly off</strong>.
                     </div>
                   )}
+                  {selectedEdges.length === 1 && selectedNodes.length === 0 && (() => {
+                    const e = selectedEdges[0]
+                    const reverseExists = graph.edges.some(x => x.from === e.to && x.to === e.from)
+                    return (
+                      <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
+                        <button onClick={() => reverseEdge(e.from, e.to)}
+                          disabled={reverseExists}
+                          title={reverseExists ? `${e.to}→${e.from} already exists` : `Flip to ${e.to}→${e.from}`}
+                          style={{ fontSize: 11, opacity: reverseExists ? 0.4 : 1 }}>
+                          ↔ Reverse
+                        </button>
+                        <button onClick={() => deleteEdge(e.from, e.to)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
+                      </div>
+                    )
+                  })()}
                 </>}
               </>
             })(),

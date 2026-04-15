@@ -279,6 +279,24 @@ describe('edge selection', () => {
   })
 })
 
+describe('reverse edge', () => {
+  it('flips the from/to of a single selected edge', async () => {
+    await setSelectionsViaApi(page, [{ type: 'edge', from: 'split', to: 'merge' }])
+    await page.evaluate(() => {
+      const gs = (window as any).__geoSankey
+      gs.dispatch({ type: 'set', history: true, next: (g: any) => ({
+        ...g,
+        edges: g.edges.map((e: any) => e.from === 'split' && e.to === 'merge'
+          ? { ...e, from: 'merge', to: 'split' } : e),
+      })})
+    })
+    await new Promise(r => setTimeout(r, 200))
+    const edgeRefs = await page.evaluate(() => (window as any).__geoSankey.graph.edges.map((e: any) => `${e.from}->${e.to}`))
+    expect(edgeRefs).toContain('merge->split')
+    expect(edgeRefs).not.toContain('split->merge')
+  })
+})
+
 describe('multi-node drag', () => {
   it('drags all selected nodes by the same delta', async () => {
     await setSelectionsViaApi(page, [
