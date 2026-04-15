@@ -128,6 +128,50 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const redo = useCallback(() => dispatch({ type: 'redo' }), [])
 
   // Graph mutation helpers
+  const renameNode = useCallback((oldId: string, newId: string) => {
+    if (!newId || newId === oldId) return
+    pushGraph(g => {
+      if (g.nodes.some(n => n.id === newId)) return g  // conflict — silently no-op
+      return {
+        nodes: g.nodes.map(n => n.id === oldId ? { ...n, id: newId } : n),
+        edges: g.edges.map(e => ({
+          ...e,
+          from: e.from === oldId ? newId : e.from,
+          to: e.to === oldId ? newId : e.to,
+        })),
+      }
+    })
+    setSelections(prev => prev.map(r =>
+      r.type === 'node' && r.id === oldId ? { type: 'node', id: newId }
+      : r.type === 'edge' && (r.from === oldId || r.to === oldId) ? {
+        type: 'edge',
+        from: r.from === oldId ? newId : r.from,
+        to: r.to === oldId ? newId : r.to,
+      }
+      : r
+    ))
+  }, [pushGraph, setSelections])
+  const duplicateNodes = useCallback((ids: string[]) => {
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    const offset = 0.001  // ~100m at mid-latitudes — visible but adjacent
+    const ts = Date.now().toString(36)
+    const renames = new Map<string, string>(ids.map((id, i) => [id, `${id}-copy${ts}-${i}`]))
+    pushGraph(g => {
+      const newNodes = g.nodes.filter(n => idSet.has(n.id)).map(n => ({
+        ...n,
+        id: renames.get(n.id)!,
+        pos: [n.pos[0] + offset, n.pos[1] + offset] as [number, number],
+      }))
+      // Edges between two copied nodes get duplicated; edges crossing the
+      // selection boundary stay attached to the originals.
+      const newEdges = g.edges
+        .filter(e => idSet.has(e.from) && idSet.has(e.to))
+        .map(e => ({ ...e, from: renames.get(e.from)!, to: renames.get(e.to)! }))
+      return { nodes: [...g.nodes, ...newNodes], edges: [...g.edges, ...newEdges] }
+    })
+    setSelections([...renames.values()].map(id => ({ type: 'node' as const, id })))
+  }, [pushGraph, setSelections])
   const updateNode = useCallback((id: string, patch: Partial<{ pos: [number, number]; bearing: number; label: string; velocity: number }>) => {
     pushGraph(g => ({
       ...g,
@@ -217,6 +261,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       }
     }},
     clearSelection: { label: 'Clear selection', group: 'Edit', defaultBindings: ['Escape'], handler: () => setSelections([]) },
+    duplicateSelection: { label: 'Duplicate selected nodes', group: 'Edit', defaultBindings: ['cmd+d', 'ctrl+d'], handler: () => duplicateNodes(selectedNodeIds) },
     undo: { label: 'Undo', group: 'Edit', defaultBindings: ['cmd+z', 'ctrl+z'], handler: undo },
     redo: { label: 'Redo', group: 'Edit', defaultBindings: ['cmd+shift+z', 'ctrl+shift+z'], handler: redo },
   })
@@ -640,7 +685,14 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                   {selectedEdges.length > 0 && <span>{selectedEdges.length} edge{selectedEdges.length === 1 ? '' : 's'}</span>}
                 </div>
                 {singleNode && <>
-                  <Row label="ID"><span style={{ fontSize: 11, opacity: 0.7 }}>{singleNode.id}</span></Row>
+                  <Row label="ID">
+                    <input style={inputStyle} defaultValue={singleNode.id} key={singleNode.id}
+                      onBlur={e => {
+                        const v = e.target.value.trim()
+                        if (v && v !== singleNode.id) renameNode(singleNode.id, v)
+                      }}
+                      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
+                  </Row>
                   <Row label="Label">
                     <input style={inputStyle} value={singleNode.label ?? ''}
                       onChange={e => updateNode(singleNode.id, { label: e.target.value || undefined } as any)} />

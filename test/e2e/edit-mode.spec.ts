@@ -279,6 +279,45 @@ describe('edge selection', () => {
   })
 })
 
+describe('node id rename + duplicate', () => {
+  it('renames a node and re-points its incident edges', async () => {
+    await page.evaluate(() => {
+      const gs = (window as any).__geoSankey
+      gs.dispatch({ type: 'set', history: true, next: (g: any) => ({
+        nodes: g.nodes.map((n: any) => n.id === 'split' ? { ...n, id: 'fork' } : n),
+        edges: g.edges.map((e: any) => ({
+          ...e,
+          from: e.from === 'split' ? 'fork' : e.from,
+          to: e.to === 'split' ? 'fork' : e.to,
+        })),
+      })})
+    })
+    await new Promise(r => setTimeout(r, 200))
+    const ids = await page.evaluate(() => (window as any).__geoSankey.graph.nodes.map((n: any) => n.id))
+    expect(ids).toContain('fork')
+    expect(ids).not.toContain('split')
+    const edgeRefs = await page.evaluate(() => (window as any).__geoSankey.graph.edges.map((e: any) => `${e.from}->${e.to}`))
+    expect(edgeRefs).toContain('origin->fork')
+    expect(edgeRefs).toContain('fork->merge')
+    expect(edgeRefs.some((s: string) => s.includes('split'))).toBe(false)
+  })
+
+  it('Cmd+D duplicates selected nodes', async () => {
+    await setSelectionsViaApi(page, [{ type: 'node', id: 'origin' }])
+    const before = await getNodeCount(page)
+    await page.keyboard.down(process.platform === 'darwin' ? 'Meta' : 'Control')
+    await page.keyboard.press('d')
+    await page.keyboard.up(process.platform === 'darwin' ? 'Meta' : 'Control')
+    await new Promise(r => setTimeout(r, 300))
+    const after = await getNodeCount(page)
+    expect(after).toBe(before + 1)
+    const sel = await getSelections(page)
+    expect(sel.length).toBe(1)
+    expect(sel[0].type).toBe('node')
+    expect(sel[0].id).not.toBe('origin')
+  })
+})
+
 describe('split edge on dbl-click', () => {
   it('inserts a through-node and replaces the edge', async () => {
     await setSelectionsViaApi(page, [])
