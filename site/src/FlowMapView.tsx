@@ -473,9 +473,42 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     if (!shift) setSelections([])
   }, [editMode, edgeSource, addEdge, setSelections, setEdgeSource])
 
+  const splitEdgeAt = useCallback((from: string, to: string, pos: [number, number]) => {
+    const id = `n${Date.now()}`
+    pushGraph(g => {
+      const e = g.edges.find(x => x.from === from && x.to === to)
+      if (!e) return g
+      const baseStyle = e.style
+      // New through-node inherits no bearing/velocity (auto-derived from edge tangent
+      // because it has 1 in / 1 out). Splits preserve the edge's weight on the first
+      // half (explicit) and let the second half ride 'auto' through-node flow.
+      const newNode = { id, pos }
+      const firstHalf = { from, to: id, weight: e.weight, ...(baseStyle ? { style: baseStyle } : {}) }
+      const secondHalf = { from: id, to, weight: 'auto' as const, ...(baseStyle ? { style: baseStyle } : {}) }
+      return {
+        nodes: [...g.nodes, newNode],
+        edges: g.edges.flatMap(x => x === e ? [firstHalf, secondHalf] : [x]),
+      }
+    })
+    setSelections([{ type: 'node', id }])
+  }, [pushGraph, setSelections])
+
   const onMapDblClick = useCallback((e: any) => {
     if (!editMode) return
     e.preventDefault()
+    // If dbl-click landed on an edge centerline, split that edge instead of
+    // adding a free-floating node.
+    const map = mapRef.current?.getMap()
+    if (map) {
+      const hits = map.queryRenderedFeatures([e.point.x, e.point.y], { layers: ['edge-centerlines-hit'] })
+      if (hits?.length) {
+        const p = hits[0].properties as { from?: string; to?: string }
+        if (p.from && p.to) {
+          splitEdgeAt(p.from, p.to, [e.lngLat.lat, e.lngLat.lng])
+          return
+        }
+      }
+    }
     addNode([e.lngLat.lat, e.lngLat.lng])
   }, [editMode, addNode])
 
@@ -589,6 +622,11 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             defaultOpen: true,
             children: (() => {
               const singleNode = selectedNodes.length === 1 && selectedEdges.length === 0 ? selectedNodes[0] : null
+              const twoNodes = selectedNodes.length === 2 && selectedEdges.length === 0
+                ? [selectedNodes[0], selectedNodes[1]] as const
+                : null
+              const edgeExists = (from: string, to: string) =>
+                graph.edges.some(e => e.from === from && e.to === to)
               const color = aggEdge('color', true) as string | undefined
               const opacityVal = aggEdge('opacity', true) as number | undefined
               const inputStyle: React.CSSProperties = {
@@ -633,6 +671,25 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                     <button onClick={() => deleteNode(singleNode.id)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
                   </div>
                 </>}
+                {twoNodes && (() => {
+                  const [a, b] = twoNodes
+                  const ab = edgeExists(a.id, b.id)
+                  const ba = edgeExists(b.id, a.id)
+                  return <>
+                    <Row label="A"><span style={{ fontSize: 11, opacity: 0.7 }}>{a.id}{a.label ? ` (${a.label})` : ''}</span></Row>
+                    <Row label="B"><span style={{ fontSize: 11, opacity: 0.7 }}>{b.id}{b.label ? ` (${b.label})` : ''}</span></Row>
+                    <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
+                      <button disabled={ab} title={ab ? 'Edge already exists' : ''}
+                        onClick={() => addEdge(a.id, b.id)} style={{ fontSize: 11, opacity: ab ? 0.4 : 1 }}>
+                        {a.id} → {b.id}
+                      </button>
+                      <button disabled={ba} title={ba ? 'Edge already exists' : ''}
+                        onClick={() => addEdge(b.id, a.id)} style={{ fontSize: 11, opacity: ba ? 0.4 : 1 }}>
+                        {b.id} → {a.id}
+                      </button>
+                    </div>
+                  </>
+                })()}
                 {selectedEdges.length > 0 && <>
                   {singleNode && <div style={{ height: 8 }} />}
                   {(() => {

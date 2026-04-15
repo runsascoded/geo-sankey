@@ -279,6 +279,26 @@ describe('edge selection', () => {
   })
 })
 
+describe('split edge on dbl-click', () => {
+  it('inserts a through-node and replaces the edge', async () => {
+    await setSelectionsViaApi(page, [])
+    const beforeNodes = await getNodeCount(page)
+    const beforeEdges = await page.evaluate(() => (window as any).__geoSankey?.graph?.edges?.length ?? 0)
+    const mid = (await getEdgeMidpoint(page, 'split', 'merge'))!
+    await mapDblClick(page, mid.x, mid.y)
+    expect(await getNodeCount(page)).toBe(beforeNodes + 1)
+    const afterEdges = await page.evaluate(() => (window as any).__geoSankey?.graph?.edges?.length ?? 0)
+    expect(afterEdges).toBe(beforeEdges + 1)
+    // Original split→merge should be gone
+    const stillThere = await page.evaluate(() => (window as any).__geoSankey?.graph?.edges?.some((e: any) => e.from === 'split' && e.to === 'merge'))
+    expect(stillThere).toBe(false)
+    // New node should be selected
+    const sel = await getSelections(page)
+    expect(sel.length).toBe(1)
+    expect(sel[0].type).toBe('node')
+  })
+})
+
 describe('velocity handle', () => {
   it('drag sets node.velocity and produces one history entry', async () => {
     expect(await getNodeVelocity(page, 'origin')).toBeUndefined()
