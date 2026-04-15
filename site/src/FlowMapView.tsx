@@ -453,8 +453,10 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     setLLZ({ lat: e.viewState.latitude, lng: e.viewState.longitude, zoom: e.viewState.zoom })
   }, [setLLZ])
 
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
   const onHover = useCallback((e: any) => {
+    setCursor({ x: e.point.x, y: e.point.y })
     if (e.features?.length) {
       const f = e.features[0], p = f.properties
       if (f.geometry?.type === 'Point') {
@@ -922,6 +924,19 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
         {tooltip && (
           <div style={{ position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 10, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px', borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10 }}>{tooltip.text}</div>
         )}
+        {editMode && edgeSource && cursor && (() => {
+          const src = graph.nodes.find(n => n.id === edgeSource)
+          const map = mapRef.current?.getMap?.()
+          if (!src || !map) return null
+          const sp = map.project([src.pos[1], src.pos[0]])
+          return (
+            <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 23 }}>
+              <line x1={sp.x} y1={sp.y} x2={cursor.x} y2={cursor.y}
+                stroke="#f59e0b" strokeWidth={2} strokeDasharray="6 4" opacity={0.85} />
+              <circle cx={cursor.x} cy={cursor.y} r={5} fill="none" stroke="#f59e0b" strokeWidth={1.5} />
+            </svg>
+          )
+        })()}
         {editMode && selection && selection.type === 'node' && (() => {
           const node = graph.nodes.find(n => n.id === selection.id)
           if (!node) return null
