@@ -590,16 +590,31 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     const map = mapRef.current.getMap()
     const canvas = map.getCanvas()
     canvas.style.cursor = 'grabbing'
-    // Snapshot pre-drag state ONCE for a single history entry
     const preDrag = graphRef.current
+    // If the dragged node is part of a multi-selection, the whole group moves
+    // together by the same lat/lon delta. Snapshot every selected node's
+    // origin position so we can compute deltas from there each frame.
+    const selIds = selections.filter(r => r.type === 'node').map(r => r.id)
+    const moveIds = selIds.includes(dragging) && selIds.length > 1 ? selIds : [dragging]
+    const origin = new Map<string, [number, number]>()
+    for (const id of moveIds) {
+      const n = preDrag.nodes.find(x => x.id === id)
+      if (n) origin.set(id, [n.pos[0], n.pos[1]])
+    }
+    const anchor = origin.get(dragging)!
     let moved = false
     const onMove = (ev: MouseEvent) => {
       const rect = canvas.getBoundingClientRect()
       const { lng, lat } = map.unproject([ev.clientX - rect.left, ev.clientY - rect.top])
+      const dLat = lat - anchor[0]
+      const dLon = lng - anchor[1]
       if (!moved) { pushHistory(preDrag); moved = true }
       setGraph(g => ({
         ...g,
-        nodes: g.nodes.map(n => n.id === dragging ? { ...n, pos: [lat, lng] } : n),
+        nodes: g.nodes.map(n => {
+          const start = origin.get(n.id)
+          return start ? { ...n, pos: [start[0] + dLat, start[1] + dLon] as [number, number] } : n
+        }),
       }))
     }
     const onUp = () => {
@@ -613,7 +628,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       document.removeEventListener('mouseup', onUp)
       canvas.style.cursor = ''
     }
-  }, [dragging, setGraph, pushHistory])
+  }, [dragging, selections, setGraph, pushHistory])
 
   const { theme } = useTheme()
 

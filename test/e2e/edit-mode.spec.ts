@@ -279,6 +279,33 @@ describe('edge selection', () => {
   })
 })
 
+describe('multi-node drag', () => {
+  it('drags all selected nodes by the same delta', async () => {
+    await setSelectionsViaApi(page, [
+      { type: 'node', id: 'origin' },
+      { type: 'node', id: 'split' },
+    ])
+    const originBefore = await getNode(page, 'origin')
+    const splitBefore = await getNode(page, 'split')
+    const originScreen = (await projectNode(page, 'origin'))!
+    // Drag origin (the multi-selection should ride along)
+    await page.mouse.move(originScreen.x, originScreen.y)
+    await page.mouse.down()
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(originScreen.x + 8 * i, originScreen.y, { steps: 1 })
+    }
+    await page.mouse.up()
+    await new Promise(r => setTimeout(r, 300))
+    const originAfter = await getNode(page, 'origin')
+    const splitAfter = await getNode(page, 'split')
+    const dOriginLon = originAfter.pos[1] - originBefore.pos[1]
+    const dSplitLon = splitAfter.pos[1] - splitBefore.pos[1]
+    // Both moved by the same lon delta (within rounding noise)
+    expect(dOriginLon).toBeGreaterThan(0)
+    expect(dSplitLon).toBeCloseTo(dOriginLon, 5)
+  })
+})
+
 describe('node id rename + duplicate', () => {
   it('renames a node and re-points its incident edges', async () => {
     await page.evaluate(() => {
