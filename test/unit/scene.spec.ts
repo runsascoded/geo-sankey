@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sceneToTS, parseScene, type Scene } from '../../site/src/scene'
+import { sceneToTS, sceneToJSON, graphToTS, parseScene, type Scene } from '../../site/src/scene'
 
 const sample: Scene = {
   graph: {
@@ -66,5 +66,47 @@ describe('parseScene', () => {
 
   it('throws on input that is not a Scene', () => {
     expect(() => parseScene("{ foo: 'bar' }")).toThrow(/Scene/)
+  })
+
+  it('accepts a bare graph literal and wraps it as a Scene', () => {
+    const bare = "{ nodes: [{ id: 'a', pos: [0, 0] }], edges: [] }"
+    const parsed = parseScene(bare)
+    expect(parsed.graph.nodes).toEqual([{ id: 'a', pos: [0, 0] }])
+    expect(parsed.graph.edges).toEqual([])
+    expect(parsed.opts).toBeUndefined()
+    expect(parsed.view).toBeUndefined()
+  })
+})
+
+describe('graphToTS', () => {
+  it('emits just nodes + edges (no scene wrapper)', () => {
+    const ts = graphToTS(sample.graph)
+    expect(ts).not.toMatch(/graph:/)
+    expect(ts).not.toMatch(/view:/)
+    expect(ts).toMatch(/nodes:/)
+    expect(ts).toMatch(/edges:/)
+  })
+
+  it('round-trips via parseScene', () => {
+    const ts = graphToTS(sample.graph)
+    const parsed = parseScene(ts)
+    expect(parsed.graph.nodes).toHaveLength(2)
+    expect(parsed.graph.edges[0].weight).toBe('auto')
+  })
+})
+
+describe('sceneToJSON', () => {
+  it('produces strict JSON with sorted nodes/edges', () => {
+    const json = sceneToJSON(sample)
+    const parsed = JSON.parse(json)
+    // Sorted by id — 'a' before 'b'
+    expect(parsed.graph.nodes[0].id).toBe('a')
+    expect(parsed.graph.nodes[1].id).toBe('b')
+  })
+
+  it('strips undefined fields', () => {
+    const json = sceneToJSON(sample)
+    expect(json).not.toMatch(/bearing/)
+    expect(json).not.toMatch(/velocity/)
   })
 })

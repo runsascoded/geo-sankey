@@ -84,17 +84,19 @@ function cleanEdge(e: GFlowEdge): Record<string, unknown> {
   return out
 }
 
-/** Serialize a Scene as a TS literal expression (no `const` prefix).
- *  Output is sorted (nodes by id, edges by from→to) for diff-friendliness. */
-export function sceneToTS(scene: Scene): string {
-  const nodes = [...scene.graph.nodes].sort((a, b) => a.id.localeCompare(b.id)).map(cleanNode)
-  const edges = [...scene.graph.edges].sort((a, b) => {
+function sortedCleanGraph(g: FlowGraph): { nodes: Record<string, unknown>[]; edges: Record<string, unknown>[] } {
+  const nodes = [...g.nodes].sort((a, b) => a.id.localeCompare(b.id)).map(cleanNode)
+  const edges = [...g.edges].sort((a, b) => {
     const k = a.from.localeCompare(b.from)
     return k !== 0 ? k : a.to.localeCompare(b.to)
   }).map(cleanEdge)
-  const top: Record<string, unknown> = {
-    graph: { nodes, edges },
-  }
+  return { nodes, edges }
+}
+
+/** Serialize a Scene as a TS literal expression (no `const` prefix).
+ *  Output is sorted (nodes by id, edges by from→to) for diff-friendliness. */
+export function sceneToTS(scene: Scene): string {
+  const top: Record<string, unknown> = { graph: sortedCleanGraph(scene.graph) }
   if (scene.opts) {
     const cleanOpts = Object.fromEntries(Object.entries(scene.opts).filter(([, v]) => v !== undefined))
     if (Object.keys(cleanOpts).length) top.opts = cleanOpts
@@ -103,28 +105,56 @@ export function sceneToTS(scene: Scene): string {
   return fmtObjectBlock(top, '')
 }
 
-/** Parse a Scene from TS-literal or JSON text. Tries JSON first; falls back
- *  to `new Function('return …')` for TS-literal syntax (single-quoted
- *  strings, unquoted keys, trailing commas). The latter is `eval`-equivalent
- *  — only call on text the user pasted themselves. */
+/** Serialize just the `{ nodes, edges }` portion as a TS literal — the
+ *  shape users have in their source files. Paste-friendly for the
+ *  "edit diagram in browser → feed to claude → update source" flow. */
+export function graphToTS(g: FlowGraph): string {
+  return fmtObjectBlock(sortedCleanGraph(g), '')
+}
+
+/** Same sort+strip as `sceneToTS` but emitted as canonical JSON with
+ *  2-space indent. Good for a diff-friendly download. */
+export function sceneToJSON(scene: Scene): string {
+  const top: Record<string, unknown> = { graph: sortedCleanGraph(scene.graph) }
+  if (scene.opts) {
+    const cleanOpts = Object.fromEntries(Object.entries(scene.opts).filter(([, v]) => v !== undefined))
+    if (Object.keys(cleanOpts).length) top.opts = cleanOpts
+  }
+  if (scene.view) top.view = scene.view
+  return JSON.stringify(top, null, 2)
+}
+
+/** Parse a Scene (or a bare graph literal) from TS-literal or JSON text.
+ *  Tries JSON first; falls back to `new Function('return …')` for TS-literal
+ *  syntax (single-quoted strings, unquoted keys, trailing commas). The
+ *  latter is `eval`-equivalent — only call on text the user pasted
+ *  themselves. Input forms accepted:
+ *  - Full scene: `{ graph: { nodes, edges }, opts?, view? }`
+ *  - Bare graph: `{ nodes, edges }` — wrapped into a scene automatically. */
 export function parseScene(text: string): Scene {
   const trimmed = text.trim()
-  // Strip a leading `const x: T = ` / `export default ` if present.
   const stripped = trimmed
     .replace(/^(?:export\s+default\s+|export\s+const\s+\w+(?::\s*[\w<>[\],\s|]+)?\s*=\s*|const\s+\w+(?::\s*[\w<>[\],\s|]+)?\s*=\s*)/, '')
     .replace(/;\s*$/, '')
+  let obj: any
   try {
-    return JSON.parse(stripped) as Scene
+    obj = JSON.parse(stripped)
   } catch {
-    // Fall through to TS-literal eval.
+    // eslint-disable-next-line no-new-func
+    const fn = new Function(`return (${stripped})`)
+    obj = fn()
   }
-  // eslint-disable-next-line no-new-func
-  const fn = new Function(`return (${stripped})`)
-  const obj = fn() as Scene
-  if (!obj || !obj.graph || !Array.isArray(obj.graph.nodes) || !Array.isArray(obj.graph.edges)) {
+  if (!obj || typeof obj !== 'object') {
+    throw new Error('Parsed value is not an object')
+  }
+  // Bare graph form: has top-level nodes/edges arrays.
+  if (Array.isArray(obj.nodes) && Array.isArray(obj.edges)) {
+    return { graph: obj as FlowGraph }
+  }
+  if (!obj.graph || !Array.isArray(obj.graph.nodes) || !Array.isArray(obj.graph.edges)) {
     throw new Error('Parsed value is not a Scene (missing graph.nodes / graph.edges)')
   }
-  return obj
+  return obj as Scene
 }
 
 export const _internal = { fmtKey, KEY_RE }
