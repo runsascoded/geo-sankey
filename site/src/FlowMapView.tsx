@@ -456,6 +456,20 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
 
   const resolvedWeights = useMemo(() => resolveEdgeWeights(graph), [graph])
 
+  const nodeRoleOf = useCallback((id: string): 'source' | 'sink' | 'split' | 'merge' | 'through' | 'isolated' => {
+    let ins = 0, outs = 0
+    for (const e of graph.edges) {
+      if (e.to === id) ins++
+      if (e.from === id) outs++
+    }
+    if (ins === 0 && outs === 0) return 'isolated'
+    if (ins === 0) return 'source'
+    if (outs === 0) return 'sink'
+    if (outs > 1) return 'split'
+    if (ins > 1) return 'merge'
+    return 'through'
+  }, [graph.edges])
+
   const debugGeo = useMemo(() =>
     showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
   [graph, showGraph, llz.zoom, wing, angle, bezierN, nodeApproach, widthScale])
@@ -760,6 +774,9 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                   {selectedEdges.length > 0 && <span>{selectedEdges.length} edge{selectedEdges.length === 1 ? '' : 's'}</span>}
                 </div>
                 {singleNode && <>
+                  <Row label="Role">
+                    <span style={{ fontSize: 11, opacity: 0.7, fontFamily: 'monospace' }}>{nodeRoleOf(singleNode.id)}</span>
+                  </Row>
                   <Row label="ID">
                     <input style={inputStyle} defaultValue={singleNode.id} key={singleNode.id}
                       onBlur={e => {
@@ -855,15 +872,26 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                     const numericWeights = selectedEdges.filter(e => typeof e.weight === 'number').map(e => e.weight as number)
                     const sharedNumeric = numericWeights.length === selectedEdges.length && numericWeights.every(w => w === numericWeights[0])
                       ? numericWeights[0] : undefined
-                    const placeholder = allAuto
-                      ? selectedEdges.length === 1 ? `auto (${(resolvedWeights.get(`${selectedEdges[0].from}→${selectedEdges[0].to}`) ?? 0).toFixed(1)})` : 'auto'
-                      : sharedNumeric === undefined ? 'Mixed' : ''
+                    // For a single auto edge, show its resolved value as the input value
+                    // (italic + mid-grey) so users can see what it currently is. Typing
+                    // overrides; clearing the field switches back to 'auto'.
+                    const singleAutoResolved = allAuto && selectedEdges.length === 1
+                      ? +(resolvedWeights.get(`${selectedEdges[0].from}→${selectedEdges[0].to}`) ?? 0).toFixed(2)
+                      : undefined
+                    const inputVal = sharedNumeric ?? singleAutoResolved ?? ''
+                    const placeholder = sharedNumeric === undefined && singleAutoResolved === undefined
+                      ? (allAuto ? 'auto' : 'Mixed') : ''
+                    const inputStyleHere: React.CSSProperties = {
+                      ...inputStyle, flex: 1,
+                      ...(singleAutoResolved !== undefined ? { color: '#a78bfa', fontStyle: 'italic' } : {}),
+                    }
                     return <>
                       <Row label="Weight">
                         <div style={{ display: 'flex', gap: 4, width: '100%' }}>
-                          <input type="number" value={sharedNumeric ?? ''} placeholder={placeholder}
+                          <input type="number" value={inputVal} placeholder={placeholder}
                             onChange={e => applyEdgeWeight(e.target.value === '' ? 'auto' : (parseFloat(e.target.value) || 0))}
-                            style={{ ...inputStyle, flex: 1 }} />
+                            style={inputStyleHere}
+                            title={singleAutoResolved !== undefined ? 'derived from upstream — type to override' : ''} />
                           <button onClick={() => applyEdgeWeight('auto')} title="Auto = sum of inputs"
                             style={{ fontSize: 10, padding: '0 6px', opacity: allAuto ? 0.4 : 1 }}>auto</button>
                         </div>
