@@ -21,5 +21,5 @@ export {
   buildJunctionMap,
 } from './flow'
 export type { RenderFlowTreeOpts } from './flow'
-export { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes } from './graph'
+export { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes, resolveEdgeWeights } from './graph'
 export type { FlowGraph, GFlowNode, GFlowEdge, FlowGraphOpts, NodeStyle, EdgeStyle, NodeRole, NodePointProperties } from './graph'

@@ -3,7 +3,7 @@ import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
 import { useActions } from 'use-kbd'
-import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes } from 'geo-sankey'
+import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes, resolveEdgeWeights } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import BearingDial from './BearingDial'
 import Drawer, { Row, Slider, Check } from './Drawer'
@@ -147,10 +147,17 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   }, [pushGraph, setSelections])
   const addEdge = useCallback((from: string, to: string) => {
     if (from === to) return
-    pushGraph(g => ({ ...g, edges: [...g.edges, { from, to, weight: 10 }] }))
+    // Default new edges to 'auto' weight — flow-conservation will derive
+    // the value from upstream inputs (sources stay explicit since they
+    // have no inputs to derive from).
+    pushGraph(g => {
+      const fromHasInputs = g.edges.some(e => e.to === from)
+      const weight: number | 'auto' = fromHasInputs ? 'auto' : 10
+      return { ...g, edges: [...g.edges, { from, to, weight }] }
+    })
     setSelections([{ type: 'edge', from, to }])
   }, [pushGraph, setSelections])
-  const updateEdge = useCallback((from: string, to: string, patch: Partial<{ weight: number }>) => {
+  const updateEdge = useCallback((from: string, to: string, patch: Partial<{ weight: number | 'auto' }>) => {
     pushGraph(g => ({
       ...g,
       edges: g.edges.map(e => e.from === from && e.to === to ? { ...e, ...patch } : e),
@@ -308,9 +315,11 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     for (const e of selectedEdges) updateEdgeStyle(e.from, e.to, patch)
   }, [selectedEdges, updateEdgeStyle])
 
-  const applyEdgeWeight = useCallback((weight: number) => {
+  const applyEdgeWeight = useCallback((weight: number | 'auto') => {
     for (const e of selectedEdges) updateEdge(e.from, e.to, { weight })
   }, [selectedEdges, updateEdge])
+
+  const resolvedWeights = useMemo(() => resolveEdgeWeights(graph), [graph])
 
   const debugGeo = useMemo(() =>
     showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
@@ -536,7 +545,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             defaultOpen: true,
             children: (() => {
               const singleNode = selectedNodes.length === 1 && selectedEdges.length === 0 ? selectedNodes[0] : null
-              const weight = aggEdge('weight')
               const color = aggEdge('color', true) as string | undefined
               const opacityVal = aggEdge('opacity', true) as number | undefined
               const inputStyle: React.CSSProperties = {
@@ -583,11 +591,26 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                 </>}
                 {selectedEdges.length > 0 && <>
                   {singleNode && <div style={{ height: 8 }} />}
-                  <Row label="Weight">
-                    <input type="number" value={weight ?? ''} placeholder={weight === undefined ? 'Mixed' : ''}
-                      onChange={e => applyEdgeWeight(parseFloat(e.target.value) || 0)}
-                      style={inputStyle} />
-                  </Row>
+                  {(() => {
+                    const allAuto = selectedEdges.every(e => e.weight === 'auto')
+                    const numericWeights = selectedEdges.filter(e => typeof e.weight === 'number').map(e => e.weight as number)
+                    const sharedNumeric = numericWeights.length === selectedEdges.length && numericWeights.every(w => w === numericWeights[0])
+                      ? numericWeights[0] : undefined
+                    const placeholder = allAuto
+                      ? selectedEdges.length === 1 ? `auto (${(resolvedWeights.get(`${selectedEdges[0].from}→${selectedEdges[0].to}`) ?? 0).toFixed(1)})` : 'auto'
+                      : sharedNumeric === undefined ? 'Mixed' : ''
+                    return <>
+                      <Row label="Weight">
+                        <div style={{ display: 'flex', gap: 4, width: '100%' }}>
+                          <input type="number" value={sharedNumeric ?? ''} placeholder={placeholder}
+                            onChange={e => applyEdgeWeight(e.target.value === '' ? 'auto' : (parseFloat(e.target.value) || 0))}
+                            style={{ ...inputStyle, flex: 1 }} />
+                          <button onClick={() => applyEdgeWeight('auto')} title="Auto = sum of inputs"
+                            style={{ fontSize: 10, padding: '0 6px', opacity: allAuto ? 0.4 : 1 }}>auto</button>
+                        </div>
+                      </Row>
+                    </>
+                  })()}
                   {!singlePoly && <>
                     <Row label="Color">
                       <div style={{ display: 'flex', gap: 4 }}>

@@ -46,7 +46,8 @@ export interface GFlowNode {
 export interface GFlowEdge {
   from: string
   to: string
-  weight: number
+  /** Numeric weight, or `'auto'` to derive from upstream inputs. */
+  weight: number | 'auto'
   style?: EdgeStyle
 }
 
@@ -217,12 +218,63 @@ function pxW(pxPerWeight: number | ((w: number) => number), weight: number): num
 }
 
 /** Edge ribbon width in px, honoring per-edge widthScale if set. */
-function edgePx(e: GFlowEdge, pxPerWeight: number | ((w: number) => number)): number {
-  return pxW(pxPerWeight, e.weight) * (e.style?.widthScale ?? 1)
+function edgePx(e: GFlowEdge, pxPerWeight: number | ((w: number) => number), weights: Map<string, number>): number {
+  return pxW(pxPerWeight, weights.get(eid(e)) ?? 0) * (e.style?.widthScale ?? 1)
 }
 
 function eid(e: GFlowEdge): string {
   return `${e.from}→${e.to}`
+}
+
+/** Resolve `'auto'` edge weights via topological propagation:
+ *  - Through-node output (1 input, 1 output): output = input weight.
+ *  - Merge output (≥1 input, 1 auto output): output = sum of inputs.
+ *  - Split outputs (1 input, multiple outputs): auto outputs share the
+ *    remainder (input − sum of explicit outputs) equally.
+ *  Unresolvable edges (cycles, missing source weight) default to 0
+ *  with a console warning. */
+export function resolveEdgeWeights(graph: FlowGraph): Map<string, number> {
+  const out = new Map<string, number>()
+  const inEdges = new Map<string, GFlowEdge[]>()
+  const outEdges = new Map<string, GFlowEdge[]>()
+  for (const n of graph.nodes) { inEdges.set(n.id, []); outEdges.set(n.id, []) }
+  for (const e of graph.edges) {
+    outEdges.get(e.from)?.push(e)
+    inEdges.get(e.to)?.push(e)
+  }
+  // Iterate to a fixed point. Each pass resolves any edge whose source
+  // node has all its inputs (and explicit-weight siblings) known.
+  let progress = true
+  while (progress && out.size < graph.edges.length) {
+    progress = false
+    for (const e of graph.edges) {
+      const id = eid(e)
+      if (out.has(id)) continue
+      if (typeof e.weight === 'number') {
+        out.set(id, e.weight)
+        progress = true
+        continue
+      }
+      const ins = inEdges.get(e.from) ?? []
+      if (!ins.every(ie => out.has(eid(ie)))) continue
+      const totalIn = ins.reduce((s, ie) => s + (out.get(eid(ie)) ?? 0), 0)
+      const outs = outEdges.get(e.from) ?? []
+      const explicit = outs
+        .filter(oe => typeof oe.weight === 'number')
+        .reduce((s, oe) => s + (oe.weight as number), 0)
+      const autoCount = outs.filter(oe => oe.weight === 'auto').length
+      const share = autoCount > 0 ? Math.max(0, totalIn - explicit) / autoCount : 0
+      out.set(id, share)
+      progress = true
+    }
+  }
+  for (const e of graph.edges) {
+    if (!out.has(eid(e))) {
+      console.warn(`[geo-sankey] could not resolve auto weight for ${eid(e)}`)
+      out.set(eid(e), 0)
+    }
+  }
+  return out
 }
 
 /** Compute LEFT and RIGHT offset curves for an edge bezier.
@@ -305,12 +357,13 @@ function perpProjection(pos: LatLon, ref: LatLon, bearing: number, ls: number): 
   return dLat * pLat + dLon * pLon  // note: pLon already has its sign
 }
 
-function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth = false): Map<string, NodeLayout> {
+function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth = false): { layouts: Map<string, NodeLayout>; weights: Map<string, number> } {
   // Clone nodes to avoid mutating the input graph (auto-bearing overwrites n.bearing)
   const nodes = graph.nodes.map(n => ({ ...n, pos: [...n.pos] as LatLon }))
   graph = { ...graph, nodes }
   const { refLat, zoom, geoScale = 1, pxPerWeight, nodeApproach = 0.5 } = opts
   const { arrowLen } = resolveArrow(opts)
+  const weights = resolveEdgeWeights(graph)
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
   const layouts = new Map<string, NodeLayout>()
 
@@ -352,7 +405,7 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
   for (const n of graph.nodes) {
     // Per-edge widthScale is applied as a weight multiplier so node
     // geometry (face widths, slot positions) matches the rendered ribbon.
-    const scaledW = (e: GFlowEdge) => e.weight * (e.style?.widthScale ?? 1)
+    const scaledW = (e: GFlowEdge) => (weights.get(eid(e)) ?? 0) * (e.style?.widthScale ?? 1)
     const inW = inEdgesOf.get(n.id)!.reduce((s, e) => s + scaledW(e), 0)
     const outW = outEdgesOf.get(n.id)!.reduce((s, e) => s + scaledW(e), 0)
     const throughW = max(inW, outW)
@@ -422,11 +475,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
       perpProjection(nodeMap.get(b.from)!.pos, n.pos, n.bearing, ls)
     )
     const throughPx = pxW(pxPerWeight, layout.throughWeight)
-    const inTotalPx = inEdges.reduce((s, e) => s + edgePx(e, pxPerWeight), 0)
+    const inTotalPx = inEdges.reduce((s, e) => s + edgePx(e, pxPerWeight, weights), 0)
     const inBasePx = alignThroughWidth ? throughPx : inTotalPx
     let inCum = 0
     for (const e of inEdges) {
-      const ePx = edgePx(e, pxPerWeight)
+      const ePx = edgePx(e, pxPerWeight, weights)
       const centerOffset = -inBasePx / 2 + inCum + ePx / 2
       inCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
@@ -446,11 +499,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
       perpProjection(nodeMap.get(a.to)!.pos, n.pos, n.bearing, ls) -
       perpProjection(nodeMap.get(b.to)!.pos, n.pos, n.bearing, ls)
     )
-    const outTotalPx = outEdges.reduce((s, e) => s + edgePx(e, pxPerWeight), 0)
+    const outTotalPx = outEdges.reduce((s, e) => s + edgePx(e, pxPerWeight, weights), 0)
     const outBasePx = alignThroughWidth ? throughPx : outTotalPx
     let outCum = 0
     for (const e of outEdges) {
-      const ePx = edgePx(e, pxPerWeight)
+      const ePx = edgePx(e, pxPerWeight, weights)
       const centerOffset = -outBasePx / 2 + outCum + ePx / 2
       outCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
@@ -465,7 +518,7 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
     }
   }
 
-  return layouts
+  return { layouts, weights }
 }
 
 /** Return debug geometry: edge center-line beziers and approach rectangles. */
@@ -474,7 +527,7 @@ export function renderFlowGraphDebug(
   opts: FlowGraphOpts,
 ): GeoJSON.FeatureCollection {
   const { bezierN = 20 } = opts
-  const layouts = computeLayout(graph, opts, true)
+  const { layouts, weights } = computeLayout(graph, opts, true)
   const features: GeoJSON.Feature[] = []
   const debugLs = lngScale(opts.refLat)
 
@@ -488,7 +541,7 @@ export function renderFlowGraphDebug(
     const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, debugLs, srcLayout.node.velocity, dstLayout.node.velocity)
     features.push({
       type: 'Feature',
-      properties: { kind: 'bezier', edge: id, weight: edge.weight },
+      properties: { kind: 'bezier', edge: id, weight: weights.get(id) ?? 0 },
       geometry: {
         type: 'LineString',
         coordinates: path.map(p => [p[1], p[0]]),
@@ -569,7 +622,7 @@ export function renderEdgeCenterlines(
   opts: FlowGraphOpts,
 ): GeoJSON.FeatureCollection {
   const { refLat, bezierN = 20 } = opts
-  const layouts = computeLayout(graph, opts)
+  const { layouts, weights } = computeLayout(graph, opts)
   const ls = lngScale(refLat)
   const features: GeoJSON.Feature[] = []
   for (const edge of graph.edges) {
@@ -599,7 +652,7 @@ export function renderFlowGraph(
     minArrowWingPx = 0, bezierN = 20,
   } = opts
   const { arrowWing, arrowLen } = resolveArrow(opts)
-  const layouts = computeLayout(graph, opts)
+  const { layouts, weights } = computeLayout(graph, opts)
   const features: GeoJSON.Feature[] = []
   const renderLs = lngScale(refLat)
 
@@ -610,7 +663,7 @@ export function renderFlowGraph(
     const dstLayout = layouts.get(edge.to)!
     const srcSlot = srcLayout.outSlots.get(id)!
     const dstSlot = dstLayout.inSlots.get(id)!
-    const ePx = edgePx(edge, pxPerWeight)
+    const ePx = edgePx(edge, pxPerWeight, weights)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
 
     const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, renderLs, srcLayout.node.velocity, dstLayout.node.velocity)
@@ -736,7 +789,7 @@ export function renderFlowGraphSinglePoly(
     bezierN = 20,
   } = opts
   const { arrowWing, arrowLen } = resolveArrow(opts)
-  const layouts = computeLayout(graph, opts, true) // align slots to through-width
+  const { layouts, weights } = computeLayout(graph, opts, true) // align slots to through-width
   const nodeMap = new Map(graph.nodes.map(n => [n.id, n]))
 
   const outEdgesOf = new Map<string, GFlowEdge[]>()
@@ -759,7 +812,7 @@ export function renderFlowGraphSinglePoly(
     const dstLayout = layouts.get(edge.to)!
     const srcSlot = srcLayout.outSlots.get(id)!
     const dstSlot = dstLayout.inSlots.get(id)!
-    const ePx = edgePx(edge, pxPerWeight)
+    const ePx = edgePx(edge, pxPerWeight, weights)
     const halfW = pxToHalfDeg(ePx, zoom, geoScale, refLat)
     const path = directedBezier(srcSlot.pos, dstSlot.pos, srcSlot.bearing, dstSlot.bearing, bezierN, spLs, srcLayout.node.velocity, dstLayout.node.velocity)
     edgePairs.set(id, offsetCurve(path, halfW, refLat))
