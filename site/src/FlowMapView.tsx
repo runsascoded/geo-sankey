@@ -793,8 +793,39 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                         title="Reset to auto" style={{ fontSize: 10, padding: '0 6px' }}>×</button>
                     </div>
                   </Row>
+                  {(() => {
+                    const otherIds = graph.nodes.filter(n => n.id !== singleNode.id).map(n => n.id)
+                    const existingOut = new Set(graph.edges.filter(e => e.from === singleNode.id).map(e => e.to))
+                    const existingIn = new Set(graph.edges.filter(e => e.to === singleNode.id).map(e => e.from))
+                    const outCandidates = otherIds.filter(id => !existingOut.has(id))
+                    const inCandidates = otherIds.filter(id => !existingIn.has(id))
+                    const targetSelectStyle: React.CSSProperties = {
+                      fontSize: 11, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
+                      border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 4px', maxWidth: 120,
+                    }
+                    return <>
+                      <Row label="Out →">
+                        <div style={{ display: 'flex', gap: 4, width: '100%' }}>
+                          <select value="" onChange={e => { if (e.target.value) addEdge(singleNode.id, e.target.value) }}
+                            disabled={outCandidates.length === 0} style={targetSelectStyle}>
+                            <option value="">{outCandidates.length === 0 ? 'no targets' : 'Pick…'}</option>
+                            {outCandidates.map(id => <option key={id} value={id}>{id}</option>)}
+                          </select>
+                          <button onClick={() => { setEdgeSource(singleNode.id); setSelections([]) }} title="Pick on map" style={{ fontSize: 11 }}>map</button>
+                        </div>
+                      </Row>
+                      <Row label="← In">
+                        <div style={{ display: 'flex', gap: 4, width: '100%' }}>
+                          <select value="" onChange={e => { if (e.target.value) addEdge(e.target.value, singleNode.id) }}
+                            disabled={inCandidates.length === 0} style={targetSelectStyle}>
+                            <option value="">{inCandidates.length === 0 ? 'no sources' : 'Pick…'}</option>
+                            {inCandidates.map(id => <option key={id} value={id}>{id}</option>)}
+                          </select>
+                        </div>
+                      </Row>
+                    </>
+                  })()}
                   <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
-                    <button onClick={() => { setEdgeSource(singleNode.id); setSelections([]) }} style={{ fontSize: 11 }}>Add edge</button>
                     <button onClick={() => deleteNode(singleNode.id)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
                   </div>
                 </>}
