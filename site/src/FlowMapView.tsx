@@ -8,6 +8,7 @@ import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import BearingDial from './BearingDial'
 import Drawer, { Row, Slider, Check } from './Drawer'
 import NodeOverlay from './NodeOverlay'
+import SelectionSection from './SelectionSection'
 import { sceneToTS, parseScene, type Scene } from './scene'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
@@ -754,191 +755,26 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             id: 'selection',
             title: `Selection (${selections.length})`,
             defaultOpen: true,
-            children: (() => {
-              const singleNode = selectedNodes.length === 1 && selectedEdges.length === 0 ? selectedNodes[0] : null
-              const twoNodes = selectedNodes.length === 2 && selectedEdges.length === 0
-                ? [selectedNodes[0], selectedNodes[1]] as const
-                : null
-              const edgeExists = (from: string, to: string) =>
-                graph.edges.some(e => e.from === from && e.to === to)
-              const color = aggEdge('color', true) as string | undefined
-              const opacityVal = aggEdge('opacity', true) as number | undefined
-              const inputStyle: React.CSSProperties = {
-                width: '100%', fontSize: 12, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
-                border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 6px',
-              }
-              return <>
-                <div style={{ fontSize: 10, opacity: 0.6, marginBottom: 6 }}>
-                  {selectedNodes.length > 0 && <span>{selectedNodes.length} node{selectedNodes.length === 1 ? '' : 's'}</span>}
-                  {selectedNodes.length > 0 && selectedEdges.length > 0 && <span> · </span>}
-                  {selectedEdges.length > 0 && <span>{selectedEdges.length} edge{selectedEdges.length === 1 ? '' : 's'}</span>}
-                </div>
-                {singleNode && <>
-                  <Row label="Role">
-                    <span style={{ fontSize: 11, opacity: 0.7, fontFamily: 'monospace' }}>{nodeRoleOf(singleNode.id)}</span>
-                  </Row>
-                  <Row label="ID">
-                    <input style={inputStyle} defaultValue={singleNode.id} key={singleNode.id}
-                      onBlur={e => {
-                        const v = e.target.value.trim()
-                        if (v && v !== singleNode.id) renameNode(singleNode.id, v)
-                      }}
-                      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} />
-                  </Row>
-                  <Row label="Label">
-                    <input style={inputStyle} value={singleNode.label ?? ''}
-                      onChange={e => updateNode(singleNode.id, { label: e.target.value || undefined } as any)} />
-                  </Row>
-                  <Row label="Lat">
-                    <input style={inputStyle} type="number" step="0.0001" value={singleNode.pos[0]}
-                      onChange={e => updateNode(singleNode.id, { pos: [parseFloat(e.target.value), singleNode.pos[1]] })} />
-                  </Row>
-                  <Row label="Lon">
-                    <input style={inputStyle} type="number" step="0.0001" value={singleNode.pos[1]}
-                      onChange={e => updateNode(singleNode.id, { pos: [singleNode.pos[0], parseFloat(e.target.value)] })} />
-                  </Row>
-                  <Row label="Bearing">
-                    <input style={inputStyle} type="number" step="1" value={round(singleNode.bearing ?? 90)}
-                      onChange={e => updateNode(singleNode.id, { bearing: parseFloat(e.target.value) || 0 })} />
-                  </Row>
-                  <Row label="Velocity">
-                    <div style={{ display: 'flex', gap: 4, width: '100%' }}>
-                      <input style={{ ...inputStyle, flex: 1 }} type="number" step="0.0001"
-                        value={singleNode.velocity ?? ''} placeholder="auto"
-                        onChange={e => updateNode(singleNode.id, { velocity: e.target.value === '' ? undefined : parseFloat(e.target.value) } as any)} />
-                      <button onClick={() => updateNode(singleNode.id, { velocity: undefined } as any)}
-                        title="Reset to auto" style={{ fontSize: 10, padding: '0 6px' }}>×</button>
-                    </div>
-                  </Row>
-                  {(() => {
-                    const otherIds = graph.nodes.filter(n => n.id !== singleNode.id).map(n => n.id)
-                    const existingOut = new Set(graph.edges.filter(e => e.from === singleNode.id).map(e => e.to))
-                    const existingIn = new Set(graph.edges.filter(e => e.to === singleNode.id).map(e => e.from))
-                    const outCandidates = otherIds.filter(id => !existingOut.has(id))
-                    const inCandidates = otherIds.filter(id => !existingIn.has(id))
-                    const targetSelectStyle: React.CSSProperties = {
-                      fontSize: 11, background: 'var(--bg, #11111b)', color: 'var(--fg, #cdd6f4)',
-                      border: '1px solid var(--border, #45475a)', borderRadius: 4, padding: '2px 4px', maxWidth: 120,
-                    }
-                    return <>
-                      <Row label="Out →">
-                        <div style={{ display: 'flex', gap: 4, width: '100%' }}>
-                          <select value="" onChange={e => { if (e.target.value) addEdge(singleNode.id, e.target.value) }}
-                            disabled={outCandidates.length === 0} style={targetSelectStyle}>
-                            <option value="">{outCandidates.length === 0 ? 'no targets' : 'Pick…'}</option>
-                            {outCandidates.map(id => <option key={id} value={id}>{id}</option>)}
-                          </select>
-                          <button onClick={() => { setEdgeSource(singleNode.id); setSelections([]) }} title="Pick on map" style={{ fontSize: 11 }}>map</button>
-                        </div>
-                      </Row>
-                      <Row label="← In">
-                        <div style={{ display: 'flex', gap: 4, width: '100%' }}>
-                          <select value="" onChange={e => { if (e.target.value) addEdge(e.target.value, singleNode.id) }}
-                            disabled={inCandidates.length === 0} style={targetSelectStyle}>
-                            <option value="">{inCandidates.length === 0 ? 'no sources' : 'Pick…'}</option>
-                            {inCandidates.map(id => <option key={id} value={id}>{id}</option>)}
-                          </select>
-                        </div>
-                      </Row>
-                    </>
-                  })()}
-                  <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
-                    <button onClick={() => deleteNode(singleNode.id)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
-                  </div>
-                </>}
-                {twoNodes && (() => {
-                  const [a, b] = twoNodes
-                  const ab = edgeExists(a.id, b.id)
-                  const ba = edgeExists(b.id, a.id)
-                  return <>
-                    <Row label="A"><span style={{ fontSize: 11, opacity: 0.7 }}>{a.id}{a.label ? ` (${a.label})` : ''}</span></Row>
-                    <Row label="B"><span style={{ fontSize: 11, opacity: 0.7 }}>{b.id}{b.label ? ` (${b.label})` : ''}</span></Row>
-                    <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
-                      <button disabled={ab} title={ab ? 'Edge already exists' : ''}
-                        onClick={() => addEdge(a.id, b.id)} style={{ fontSize: 11, opacity: ab ? 0.4 : 1 }}>
-                        {a.id} → {b.id}
-                      </button>
-                      <button disabled={ba} title={ba ? 'Edge already exists' : ''}
-                        onClick={() => addEdge(b.id, a.id)} style={{ fontSize: 11, opacity: ba ? 0.4 : 1 }}>
-                        {b.id} → {a.id}
-                      </button>
-                    </div>
-                  </>
-                })()}
-                {selectedEdges.length > 0 && <>
-                  {singleNode && <div style={{ height: 8 }} />}
-                  {(() => {
-                    const allAuto = selectedEdges.every(e => e.weight === 'auto')
-                    const numericWeights = selectedEdges.filter(e => typeof e.weight === 'number').map(e => e.weight as number)
-                    const sharedNumeric = numericWeights.length === selectedEdges.length && numericWeights.every(w => w === numericWeights[0])
-                      ? numericWeights[0] : undefined
-                    // For a single auto edge, show its resolved value as the input value
-                    // (italic + mid-grey) so users can see what it currently is. Typing
-                    // overrides; clearing the field switches back to 'auto'.
-                    const singleAutoResolved = allAuto && selectedEdges.length === 1
-                      ? +(resolvedWeights.get(`${selectedEdges[0].from}→${selectedEdges[0].to}`) ?? 0).toFixed(2)
-                      : undefined
-                    const inputVal = sharedNumeric ?? singleAutoResolved ?? ''
-                    const placeholder = sharedNumeric === undefined && singleAutoResolved === undefined
-                      ? (allAuto ? 'auto' : 'Mixed') : ''
-                    const inputStyleHere: React.CSSProperties = {
-                      ...inputStyle, flex: 1,
-                      ...(singleAutoResolved !== undefined ? { color: '#a78bfa', fontStyle: 'italic' } : {}),
-                    }
-                    return <>
-                      <Row label="Weight">
-                        <div style={{ display: 'flex', gap: 4, width: '100%' }}>
-                          <input type="number" value={inputVal} placeholder={placeholder}
-                            onChange={e => applyEdgeWeight(e.target.value === '' ? 'auto' : (parseFloat(e.target.value) || 0))}
-                            style={inputStyleHere}
-                            title={singleAutoResolved !== undefined ? 'derived from upstream — type to override' : ''} />
-                          <button onClick={() => applyEdgeWeight('auto')} title="Auto = sum of inputs"
-                            style={{ fontSize: 10, padding: '0 6px', opacity: allAuto ? 0.4 : 1 }}>auto</button>
-                        </div>
-                      </Row>
-                    </>
-                  })()}
-                  {!singlePoly && <>
-                    <Row label="Color">
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <input type="color" value={color ?? '#888888'}
-                          onChange={e => applyEdgeStyle({ color: e.target.value })}
-                          style={{ width: 32, height: 24, padding: 0, border: '1px solid var(--border, #45475a)', borderRadius: 4, background: 'transparent' }} />
-                        <input type="text" value={color ?? ''} placeholder={color === undefined ? 'Mixed' : ''}
-                          onChange={e => applyEdgeStyle({ color: e.target.value })}
-                          style={{ ...inputStyle, flex: 1, fontSize: 11 }} />
-                        <button onClick={() => applyEdgeStyle({ color: undefined as any })} title="Clear (use page default)"
-                          style={{ fontSize: 10, padding: '0 6px' }}>×</button>
-                      </div>
-                    </Row>
-                    <Row label="Opacity">
-                      <Slider value={opacityVal ?? 1} onChange={v => applyEdgeStyle({ opacity: v })}
-                        min={0} max={1} step={0.05} fmt={v => opacityVal === undefined ? 'Mix' : v.toFixed(2)} />
-                    </Row>
-                  </>}
-                  {singlePoly && (
-                    <div style={{ fontSize: 10, opacity: 0.5, marginTop: 4 }}>
-                      Per-edge color &amp; opacity require <strong>single-poly off</strong>.
-                    </div>
-                  )}
-                  {selectedEdges.length === 1 && selectedNodes.length === 0 && (() => {
-                    const e = selectedEdges[0]
-                    const reverseExists = graph.edges.some(x => x.from === e.to && x.to === e.from)
-                    return (
-                      <div style={{ display: 'flex', gap: 4, marginTop: 8 }}>
-                        <button onClick={() => reverseEdge(e.from, e.to)}
-                          disabled={reverseExists}
-                          title={reverseExists ? `${e.to}→${e.from} already exists` : `Flip to ${e.to}→${e.from}`}
-                          style={{ fontSize: 11, opacity: reverseExists ? 0.4 : 1 }}>
-                          ↔ Reverse
-                        </button>
-                        <button onClick={() => deleteEdge(e.from, e.to)} style={{ fontSize: 11, color: '#ef4444' }}>Delete</button>
-                      </div>
-                    )
-                  })()}
-                </>}
-              </>
-            })(),
+            children: <SelectionSection
+              graph={graph}
+              selections={selections}
+              selectedNodes={selectedNodes}
+              selectedEdges={selectedEdges}
+              resolvedWeights={resolvedWeights}
+              singlePoly={singlePoly}
+              nodeRoleOf={nodeRoleOf}
+              aggEdge={aggEdge as any}
+              updateNode={updateNode}
+              renameNode={renameNode}
+              deleteNode={deleteNode}
+              addEdge={addEdge}
+              deleteEdge={deleteEdge}
+              reverseEdge={reverseEdge}
+              setEdgeSource={setEdgeSource}
+              setSelections={setSelections}
+              applyEdgeStyle={applyEdgeStyle}
+              applyEdgeWeight={applyEdgeWeight}
+            />,
           }] : []),
         ]} />
         <MapGL
