@@ -62,7 +62,9 @@ export default function NodeOverlay({ nodeId, label, bearing, pos, velocity, ref
       if (!sp) return
       const dx = (e.clientX - rect.left) - sp.x
       const dy = (e.clientY - rect.top) - sp.y
-      const deg = ((atan2(dx, -dy) * 180 / PI) + 360) % 360
+      let deg = ((atan2(dx, -dy) * 180 / PI) + 360) % 360
+      // Shift snaps to 15° increments (so e.g. 0, 15, 30, 45, 90 are easy targets).
+      if (e.shiftKey) deg = Math.round(deg / 15) * 15 % 360
       if (!committed) { cbRef.current.onBeginRotate(); committed = true }
       cbRef.current.onRotateTransient(round(deg))
     }
@@ -126,13 +128,25 @@ export default function NodeOverlay({ nodeId, label, bearing, pos, velocity, ref
     }
   }
 
+  // Mirror positions on the opposite side of the bearing axis — visual cue
+  // for the smooth-spline constraint (one velocity applies to all edges at
+  // this node, so both tangent directions have the same handle length).
+  const mx = 2 * screenPos.x - hx
+  const my = 2 * screenPos.y - hy
+  const mvx = 2 * screenPos.x - vx
+  const mvy = 2 * screenPos.y - vy
+
   return <>
-    {/* Bearing ray (from node to rotation handle) + velocity ray (beyond) */}
+    {/* Tangent axis: full line through the node from one velocity handle to
+     *  the other. Plus the shorter bearing ray (solid node→rotation handle
+     *  segment) to anchor the rotation handle visually. */}
     <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 25 }}>
-      <line x1={screenPos.x} y1={screenPos.y} x2={hx} y2={hy} stroke="#14B8A6" strokeWidth={1.5} strokeDasharray="4 2" />
-      <line x1={hx} y1={hy} x2={vx} y2={vy} stroke={velSet ? '#a78bfa' : '#a78bfa88'} strokeWidth={1.5} strokeDasharray="2 3" />
+      <line x1={mvx} y1={mvy} x2={vx} y2={vy}
+        stroke={velSet ? '#a78bfa' : '#a78bfa55'} strokeWidth={1.5} strokeDasharray="2 3" />
+      <line x1={mx} y1={my} x2={hx} y2={hy}
+        stroke="#14B8A6" strokeWidth={1.5} strokeDasharray="4 2" opacity={0.9} />
     </svg>
-    {/* Rotation handle */}
+    {/* Rotation handle (primary) */}
     <div
       style={{
         position: 'absolute', left: hx - 7, top: hy - 7,
@@ -141,12 +155,21 @@ export default function NodeOverlay({ nodeId, label, bearing, pos, velocity, ref
         cursor: 'grab', zIndex: 26,
       }}
       onMouseDown={e => { e.stopPropagation(); e.preventDefault(); setRotDragging(true) }}
-      title="Drag to rotate bearing"
+      title="Drag to rotate bearing (hold Shift to snap to 15°)"
+    />
+    {/* Rotation handle mirror (visual only — same axis, opposite side) */}
+    <div
+      style={{
+        position: 'absolute', left: mx - 4, top: my - 4,
+        width: 8, height: 8, borderRadius: '50%',
+        background: 'transparent', border: '1.5px solid #14B8A6',
+        opacity: 0.7, zIndex: 26, pointerEvents: 'none',
+      }}
     />
     <div style={{ position: 'absolute', left: hx + 10, top: hy - 6, fontSize: 10, color: '#14B8A6', pointerEvents: 'none', zIndex: 26 }}>
       {round(bearing)}&deg;
     </div>
-    {/* Velocity handle — diamond to distinguish from rotation handle */}
+    {/* Velocity handle (primary) — diamond to distinguish from rotation */}
     <div
       style={{
         position: 'absolute', left: vx - 6, top: vy - 6,
@@ -159,6 +182,17 @@ export default function NodeOverlay({ nodeId, label, bearing, pos, velocity, ref
       onMouseDown={e => { e.stopPropagation(); e.preventDefault(); setVelDragging(true) }}
       onDoubleClick={e => { e.stopPropagation(); onResetVelocity() }}
       title={velSet ? `Velocity ${velocity!.toFixed(4)} — drag to adjust, dbl-click to reset` : 'Drag to set bezier control distance'}
+    />
+    {/* Velocity mirror (visual only) */}
+    <div
+      style={{
+        position: 'absolute', left: mvx - 4, top: mvy - 4,
+        width: 8, height: 8,
+        background: 'transparent',
+        border: `1.5px solid ${velSet ? '#a78bfa' : '#a78bfa88'}`,
+        transform: 'rotate(45deg)',
+        opacity: 0.7, zIndex: 26, pointerEvents: 'none',
+      }}
     />
 
     {/* Node label pill (no editing here — properties live in the drawer) */}
