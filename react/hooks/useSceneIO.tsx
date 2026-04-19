@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import type { FlowGraph } from 'geo-sankey'
-import { sceneToTS, sceneToJSON, graphToTS, parseScene, type Scene } from './scene'
+import { sceneToTS, sceneToJSON, graphToTS, parseScene, type Scene } from '../scene'
 
 interface SceneOpts {
   color: string

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sceneToTS, sceneToJSON, graphToTS, parseScene, type Scene } from '../../site/src/scene'
+import { sceneToTS, sceneToJSON, graphToTS, parseScene, type Scene } from '../../react/scene'
 
 const sample: Scene = {
   graph: {
