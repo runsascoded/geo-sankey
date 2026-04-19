@@ -43,7 +43,7 @@ export interface FlowMapViewProps {
   defaultNodes?: number
 }
 
-export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults, defaultNodes = 0 }: FlowMapViewProps) {
+export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults, defaultNodes = 2 }: FlowMapViewProps) {
   const gs = useGraphState(initialGraph)
   const { graph, setGraph, pushGraph, pushHistory, undo, redo, dispatch } = gs
   const sel = useGraphSelection(graph)
@@ -52,7 +52,10 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const { renameNode, duplicateNodes, updateNode, addNode, deleteNode, addEdge, updateEdge, updateEdgeStyle, deleteEdge, reverseEdge, splitEdgeAt, applyEdgeStyle, applyEdgeWeight } = mut
   const [llz, setLLZ] = useLLZ(defaults)
   const mapRef = useRef<any>(null)
-  const [editMode, setEditMode] = useState(() => sessionStorage.getItem('geo-sankey-edit') === '1')
+  const [editMode, setEditMode] = useState(() => {
+    const stored = sessionStorage.getItem('geo-sankey-edit')
+    return stored != null ? stored === '1' : true  // default ON
+  })
   const [dragging, setDragging] = useState<string | null>(null)
   const [edgeSource, setEdgeSource] = useState<string | null>(null)
   const [singlePoly, setSinglePoly] = useUrlState('sp', { encode: (v) => v ? undefined : '0', decode: (s) => s !== '0' })
@@ -572,7 +575,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             </svg>
           )
         })()}
-        {editMode && selection && selection.type === 'node' && (() => {
+        {selection && selection.type === 'node' && (() => {
           const node = graph.nodes.find(n => n.id === selection.id)
           if (!node) return null
           return (
