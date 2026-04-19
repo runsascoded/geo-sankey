@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useRef, useEffect, useReducer } from 'react'
+import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
@@ -9,6 +9,7 @@ import BearingDial from './BearingDial'
 import Drawer, { Row, Slider, Check } from './Drawer'
 import NodeOverlay from './NodeOverlay'
 import SelectionSection from './SelectionSection'
+import { useGraphState } from './hooks/useGraphState'
 import { useSceneIO } from './useSceneIO'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
@@ -42,7 +43,6 @@ export interface FlowMapViewProps {
 
 type SelectionRef = { type: 'node'; id: string } | { type: 'edge'; from: string; to: string }
 
-/** True if the two SelectionRefs point at the same feature. */
 function selRefEq(a: SelectionRef, b: SelectionRef): boolean {
   if (a.type !== b.type) return false
   if (a.type === 'node' && b.type === 'node') return a.id === b.id
@@ -50,60 +50,17 @@ function selRefEq(a: SelectionRef, b: SelectionRef): boolean {
   return false
 }
 
-type GraphAction =
-  | { type: 'set'; next: FlowGraph | ((g: FlowGraph) => FlowGraph); history: boolean }
-  | { type: 'undo' }
-  | { type: 'redo' }
-  | { type: 'pushHistory'; snapshot: FlowGraph }
-
-interface GraphState { graph: FlowGraph; past: FlowGraph[]; future: FlowGraph[] }
-
-function graphReducer(s: GraphState, a: GraphAction): GraphState {
-  switch (a.type) {
-    case 'set': {
-      const next = typeof a.next === 'function' ? a.next(s.graph) : a.next
-      if (!a.history) return { ...s, graph: next }
-      if (next === s.graph) return s
-      return { graph: next, past: [...s.past, s.graph], future: [] }
-    }
-    case 'pushHistory': {
-      // Dedup only against the LAST past entry (avoid duplicate consecutive snapshots).
-      // Explicit pushHistory is for begin-of-drag — it should push even when snapshot equals current,
-      // because transient updates to follow will mutate current without pushing history themselves.
-      const last = s.past[s.past.length - 1]
-      if (last === a.snapshot) return s
-      return { ...s, past: [...s.past, a.snapshot], future: [] }
-    }
-    case 'undo': {
-      if (s.past.length === 0) return s
-      const prev = s.past[s.past.length - 1]
-      return { graph: prev, past: s.past.slice(0, -1), future: [...s.future, s.graph] }
-    }
-    case 'redo': {
-      if (s.future.length === 0) return s
-      const next = s.future[s.future.length - 1]
-      return { graph: next, past: [...s.past, s.graph], future: s.future.slice(0, -1) }
-    }
-  }
-}
-
 export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults, defaultNodes = 0 }: FlowMapViewProps) {
-  const [gs, dispatch] = useReducer(graphReducer, { graph: initialGraph, past: [], future: [] })
-  const graph = gs.graph
-  const setGraph = useCallback((next: FlowGraph | ((g: FlowGraph) => FlowGraph)) => {
-    dispatch({ type: 'set', next, history: false })
-  }, [])
+  const gs = useGraphState(initialGraph)
+  const { graph, setGraph, pushGraph, pushHistory, undo, redo, dispatch } = gs
   const [llz, setLLZ] = useLLZ(defaults)
   const mapRef = useRef<any>(null)
   const [editMode, setEditMode] = useState(() => sessionStorage.getItem('geo-sankey-edit') === '1')
-  // Selection is an array to support shift-click multi-select. The first
-  // entry is the "primary" selection (anchors the NodeOverlay, etc.).
   const [selections, setSelectionsRaw] = useState<SelectionRef[]>(() => {
     try {
       const s = sessionStorage.getItem('geo-sankey-sel')
       if (!s) return []
       const parsed = JSON.parse(s)
-      // Back-compat: previously stored as a single ref or null.
       if (Array.isArray(parsed)) return parsed
       return parsed ? [parsed] : []
     } catch { return [] }
@@ -115,18 +72,9 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       return n
     })
   }, [])
-  const selection = selections[0] ?? null  // primary selection — keeps existing code working
+  const selection = selections[0] ?? null
   const [dragging, setDragging] = useState<string | null>(null)
-  const [edgeSource, setEdgeSource] = useState<string | null>(null) // for edge creation
-
-  const pushGraph = useCallback((next: FlowGraph | ((g: FlowGraph) => FlowGraph)) => {
-    dispatch({ type: 'set', next, history: true })
-  }, [])
-  const pushHistory = useCallback((snapshot: FlowGraph) => {
-    dispatch({ type: 'pushHistory', snapshot })
-  }, [])
-  const undo = useCallback(() => dispatch({ type: 'undo' }), [])
-  const redo = useCallback(() => dispatch({ type: 'redo' }), [])
+  const [edgeSource, setEdgeSource] = useState<string | null>(null)
 
   // Graph mutation helpers
   const renameNode = useCallback((oldId: string, newId: string) => {
@@ -558,10 +506,10 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       redo,
       selections,
       setSelections,
-      pastLen: gs.past.length,
-      futureLen: gs.future.length,
+      pastLen: gs.pastLen,
+      futureLen: gs.futureLen,
     }
-  }, [graph, gs.past.length, gs.future.length, undo, redo, selections, setSelections])
+  }, [graph, gs.pastLen, gs.futureLen, undo, redo, selections, setSelections])
 
   useEffect(() => {
     if (!dragging || !mapRef.current) return
