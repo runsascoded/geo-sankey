@@ -1,12 +1,16 @@
 # Composable React Hooks for geo-sankey
 
+> **Status (2026-04):** Phase 1 (extract hooks) and Phase 2 (promote to
+> `geo-sankey/react` subpath) are **done**. Three hooks + reference
+> components live in `react/`. Phase 3 (turnkey `<FlowEditor>` component)
+> is deferred.
+
 ## Problem
 
 All editing logic (graph state, undo/redo, selection, drag, split-edge,
-rename, etc.) lives inside `FlowMapView.tsx` — a ~900-line component that
-mixes state management, interaction handling, and rendering. Consumers
-who want to embed a geo-sankey editor in their own app have no way to
-reuse this logic without copying the component wholesale.
+rename, etc.) lived in `FlowMapView.tsx` — a ~1150-line component mixing
+state, interaction, and rendering. Consumers who wanted to embed a
+geo-sankey editor had no way to reuse the logic without copying wholesale.
 
 ## Goal
 

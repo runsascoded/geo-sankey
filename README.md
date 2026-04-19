@@ -33,7 +33,7 @@ const graph: FlowGraph = {
     { from: 'split', to: 'merge', weight: 20 },
     { from: 'split', to: 'south', weight: 15 },
     { from: 'north', to: 'merge', weight: 30 },
-    { from: 'merge', to: 'dest', weight: 50 },
+    { from: 'merge', to: 'dest', weight: 'auto' },
   ],
 }
 
@@ -51,21 +51,62 @@ const fc = renderFlowGraphSinglePoly(graph, {
 | Option | Default | Description |
 |--------|---------|-------------|
 | `pxPerWeight` | — | Pixels per unit weight (controls ribbon width) |
+| `mPerWeight` | — | Meters per unit weight (zoom-aware; overrides `pxPerWeight`) |
 | `wing` | `0.4` | Arrowhead wing extension (fraction of stem width, per side) |
 | `angle` | `45` | Arrowhead wingtip angle (degrees) |
 | `bezierN` | `20` | Bezier sample count per edge (1 = straight lines) |
 | `nodeApproach` | `0.5` | Through-node approach zone (multiple of halfW) |
 | `creaseSkip` | `1` | Crease cleanup level (0 = raw, 1+ = cleaned) |
 
+### Auto-Weight Propagation
+
+Edge weights can be `number` or `'auto'`. Auto weights are resolved
+topologically: merge outputs = sum of inputs, through-node outputs = input,
+split outputs share the remainder equally. Use `resolveEdgeWeights(graph)`
+to get the resolved numeric map.
+
+### Auto-Bearing
+
+Bearings are auto-derived for nodes with a single output (toward dest) or sinks with a single input (from source). Only multi-output split nodes need explicit bearings.
+
+### Per-Node Velocity
+
+`GFlowNode.velocity?: number` overrides the bezier control-point distance
+at a node, controlling curve tightness. Applies symmetrically (G1 smooth
+spline constraint). Undefined → auto-heuristic.
+
 ### Render Modes
 
 - **`renderFlowGraphSinglePoly`** — single polygon per connected component (seamless at any opacity)
 - **`renderFlowGraph`** — one polygon per edge + arrowheads (faster, slight seams at <100% opacity)
 - **`renderFlowGraphDebug`** — debug geometry: bezier center lines, approach rectangles, arrowhead outlines
+- **`renderEdgeCenterlines`** — per-edge bezier LineStrings (for hit-testing / selection overlays)
 
-### Auto-Bearing
+## React Hooks (`geo-sankey/react`)
 
-Bearings are auto-derived for nodes with a single output (toward dest) or sinks with a single input (from source). Only multi-output split nodes need explicit bearings.
+Composable hooks for building editing UIs on top of the geometry core:
+
+```ts
+import {
+  useGraphState, useGraphSelection, useGraphMutations, useSceneIO,
+  Drawer, SelectionSection, NodeOverlay,
+} from 'geo-sankey/react'
+```
+
+| Hook | Purpose |
+|---|---|
+| `useGraphState(initial)` | Graph + undo/redo machine |
+| `useGraphSelection(graph)` | Selection, resolved weights, node role, aggregators |
+| `useGraphMutations(gs, sel)` | 13 graph mutation ops (add/delete/rename/split/reverse/...) |
+| `useSceneIO(args)` | Export JSON/TS, copy graph to clipboard, paste-import modal |
+
+Reference components: `<Drawer>`, `<SelectionSection>`, `<NodeOverlay>`.
+
+Scene serialization for the "edit in browser → feed to Claude → update
+source" workflow:
+- `graphToTS(graph)` — `{ nodes, edges }` as a TS literal (paste into source)
+- `sceneToTS(scene)` / `sceneToJSON(scene)` — full scene with opts + view
+- `parseScene(text)` — accepts JSON, TS literal, or bare graph
 
 ## Demo Site
 
@@ -73,11 +114,12 @@ The [demo site][demo] includes:
 
 - **HBT Ferry** — partial [NY Waterway][nyw] ferry network with splits, merges, and arrowheads
 - **Simple Flow** — 6-node graph demonstrating split + merge
-- Interactive controls: width scale, opacity, wing/angle, BPL, approach, crease
+- Interactive controls: width unit (px/meters), opacity, wing/angle, BPL, approach, crease
 - Debug overlays: ring points/edges with tooltips, graph bezier spines, approach rectangles
 - Keyboard shortcuts (`?` to view all, `Cmd+K` for command palette)
-- **Edit mode** (`e`): create/drag nodes, add edges, edit properties
-- **Export/Import** (`Cmd+Shift+E` / `Cmd+I`): save/load scenes as JSON
+- **Selection** always on — click nodes/edges to inspect in drawer
+- **Edit mode** (checkbox in drawer or `e` key): drag nodes, dbl-click to add/split edges, Cmd+D to duplicate, multi-node drag
+- **Export/Import**: `Cmd+Shift+G` copy graph as TS, `Cmd+Shift+E` download JSON, `Cmd+Shift+V` paste-import
 
 ## Prior & Related Art
 

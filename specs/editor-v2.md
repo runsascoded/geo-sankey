@@ -1,5 +1,14 @@
 # Editor v2: Segment-Level Properties, Bezier Handles, Multi-Select
 
+> **Status (2026-04):** P1 (drawer + multi-select + defaults), P1.4 (velocity,
+> edge centerlines, NodeOverlay cleanup), P3.2 (mPerWeight), P4.1 (auto
+> weights), P5 (scene round-trip) are **done**. P2 (bezier handles) is
+> partially done (velocity + smooth-handle viz). P4.2 (node-type palette) is
+> deferred. Additional edit-mode features shipped: connect-2-nodes, split
+> edge on dbl-click, rename, duplicate, multi-drag, reverse, add-edge
+> dropdown, direction arrows, auto-fit on paste, always-on selection.
+> Hooks extracted to `geo-sankey/react` subpath (see `specs/react-hooks-library.md`).
+
 Follow-up to [editable-mode](done/editable-mode.md). The v1 editor established
 in-place overlays, rotation handles, and undo/redo. v2 makes the editor
 expressive enough to construct a diagram entirely in the browser, tune its
