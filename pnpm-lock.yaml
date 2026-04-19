@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      react:
+        specifier: '>=18'
+        version: 19.2.4
       use-kbd:
         specifier: https://github.com/runsascoded/use-kbd#e8de7954c2d39b639dc1b99203659b91fd8fd269
         version: https://codeload.github.com/runsascoded/use-kbd/tar.gz/e8de7954c2d39b639dc1b99203659b91fd8fd269(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
