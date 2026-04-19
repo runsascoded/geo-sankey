@@ -3,13 +3,15 @@ import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
 import { useActions } from 'use-kbd'
-import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes, resolveEdgeWeights } from 'geo-sankey'
+import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import BearingDial from './BearingDial'
 import Drawer, { Row, Slider, Check } from './Drawer'
 import NodeOverlay from './NodeOverlay'
 import SelectionSection from './SelectionSection'
 import { useGraphState } from './hooks/useGraphState'
+import { useGraphSelection, selRefEq } from './hooks/useGraphSelection'
+import type { SelectionRef } from './hooks/useGraphSelection'
 import { useSceneIO } from './useSceneIO'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
@@ -41,38 +43,14 @@ export interface FlowMapViewProps {
   defaultNodes?: number
 }
 
-type SelectionRef = { type: 'node'; id: string } | { type: 'edge'; from: string; to: string }
-
-function selRefEq(a: SelectionRef, b: SelectionRef): boolean {
-  if (a.type !== b.type) return false
-  if (a.type === 'node' && b.type === 'node') return a.id === b.id
-  if (a.type === 'edge' && b.type === 'edge') return a.from === b.from && a.to === b.to
-  return false
-}
-
 export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults, defaultNodes = 0 }: FlowMapViewProps) {
   const gs = useGraphState(initialGraph)
   const { graph, setGraph, pushGraph, pushHistory, undo, redo, dispatch } = gs
+  const sel = useGraphSelection(graph)
+  const { selections, setSelections, selection, toggleOrReplace, selectedNodes, selectedEdges, selectedNodeIds, selectedEdgeIds, resolvedWeights, nodeRoleOf, aggEdge } = sel
   const [llz, setLLZ] = useLLZ(defaults)
   const mapRef = useRef<any>(null)
   const [editMode, setEditMode] = useState(() => sessionStorage.getItem('geo-sankey-edit') === '1')
-  const [selections, setSelectionsRaw] = useState<SelectionRef[]>(() => {
-    try {
-      const s = sessionStorage.getItem('geo-sankey-sel')
-      if (!s) return []
-      const parsed = JSON.parse(s)
-      if (Array.isArray(parsed)) return parsed
-      return parsed ? [parsed] : []
-    } catch { return [] }
-  })
-  const setSelections = useCallback((next: SelectionRef[] | ((prev: SelectionRef[]) => SelectionRef[])) => {
-    setSelectionsRaw(prev => {
-      const n = typeof next === 'function' ? next(prev) : next
-      sessionStorage.setItem('geo-sankey-sel', JSON.stringify(n))
-      return n
-    })
-  }, [])
-  const selection = selections[0] ?? null
   const [dragging, setDragging] = useState<string | null>(null)
   const [edgeSource, setEdgeSource] = useState<string | null>(null)
 
@@ -274,42 +252,10 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     return renderNodes(graph, filter)
   }, [graph, showNodes, editMode])
 
-  const selectedNodeIds = useMemo(
-    () => selections.filter(r => r.type === 'node').map(r => r.id),
-    [selections],
-  )
-
-  const selectedEdgeIds = useMemo(
-    () => selections.filter(r => r.type === 'edge').map(r => `${(r as Extract<SelectionRef, { type: 'edge' }>).from}->${(r as Extract<SelectionRef, { type: 'edge' }>).to}`),
-    [selections],
-  )
-
   const edgeCenterlines = useMemo(
     () => editMode ? renderEdgeCenterlines(graph, graphOpts) : null,
     [editMode, graph, llz.zoom, bezierN, nodeApproach, widthScale, widthUnit, mPerWeight],
   )
-
-  const selectedEdges = useMemo(() => {
-    const refs = selections.filter(r => r.type === 'edge') as Extract<SelectionRef, { type: 'edge' }>[]
-    return refs.map(r => graph.edges.find(e => e.from === r.from && e.to === r.to)!).filter(Boolean)
-  }, [selections, graph.edges])
-
-  const selectedNodes = useMemo(() => {
-    const refs = selections.filter(r => r.type === 'node') as Extract<SelectionRef, { type: 'node' }>[]
-    return refs.map(r => graph.nodes.find(n => n.id === r.id)!).filter(Boolean)
-  }, [selections, graph.nodes])
-
-  /** Aggregate a field across selected edges: shared value, or undefined when mixed/empty. */
-  function aggEdge<K extends keyof GFlowEdge>(k: K): GFlowEdge[K] | undefined
-  function aggEdge(k: 'color' | 'opacity' | 'widthScale', fromStyle: true): string | number | undefined
-  function aggEdge<K extends keyof GFlowEdge>(k: K | 'color' | 'opacity' | 'widthScale', fromStyle?: true): any {
-    if (!selectedEdges.length) return undefined
-    const getter = fromStyle
-      ? (e: GFlowEdge) => (e.style as any)?.[k]
-      : (e: GFlowEdge) => (e as any)[k]
-    const first = getter(selectedEdges[0])
-    return selectedEdges.every(e => getter(e) === first) ? first : undefined
-  }
 
   const applyEdgeStyle = useCallback((patch: Partial<{ color: string; opacity: number; widthScale: number }>) => {
     for (const e of selectedEdges) updateEdgeStyle(e.from, e.to, patch)
@@ -318,22 +264,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const applyEdgeWeight = useCallback((weight: number | 'auto') => {
     for (const e of selectedEdges) updateEdge(e.from, e.to, { weight })
   }, [selectedEdges, updateEdge])
-
-  const resolvedWeights = useMemo(() => resolveEdgeWeights(graph), [graph])
-
-  const nodeRoleOf = useCallback((id: string): 'source' | 'sink' | 'split' | 'merge' | 'through' | 'isolated' => {
-    let ins = 0, outs = 0
-    for (const e of graph.edges) {
-      if (e.to === id) ins++
-      if (e.from === id) outs++
-    }
-    if (ins === 0 && outs === 0) return 'isolated'
-    if (ins === 0) return 'source'
-    if (outs === 0) return 'sink'
-    if (outs > 1) return 'split'
-    if (ins > 1) return 'merge'
-    return 'through'
-  }, [graph.edges])
 
   const debugGeo = useMemo(() =>
     showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
@@ -404,16 +334,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     const centerlineFeatures = e.features?.filter((f: any) => f.layer?.id === 'edge-centerlines-hit')
     const edgeFeatures = e.features?.filter((f: any) => f.layer?.id === 'flows-fill')
 
-    const toggleOrReplace = (ref: SelectionRef) => {
-      if (shift) {
-        setSelections(prev => prev.some(r => selRefEq(r, ref))
-          ? prev.filter(r => !selRefEq(r, ref))
-          : [...prev, ref])
-      } else {
-        setSelections([ref])
-      }
-    }
-
     // Node clicks take precedence over ribbon clicks
     if (nodeFeatures?.length) {
       const nodeId = nodeFeatures[0].properties.id
@@ -422,13 +342,13 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
         setEdgeSource(null)
         return
       }
-      toggleOrReplace({ type: 'node', id: nodeId })
+      toggleOrReplace({ type: 'node', id: nodeId }, !!shift)
       return
     }
     if (centerlineFeatures?.length) {
       const p = centerlineFeatures[0].properties
       if (p.from && p.to) {
-        toggleOrReplace({ type: 'edge', from: p.from, to: p.to })
+        toggleOrReplace({ type: 'edge', from: p.from, to: p.to }, !!shift)
         return
       }
     }
@@ -436,7 +356,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       const p = edgeFeatures[0].properties
       // Only edge ribbons have from/to (through-node bodies in singlePoly don't)
       if (p.from && p.to) {
-        toggleOrReplace({ type: 'edge', from: p.from, to: p.to })
+        toggleOrReplace({ type: 'edge', from: p.from, to: p.to }, !!shift)
         return
       }
     }
