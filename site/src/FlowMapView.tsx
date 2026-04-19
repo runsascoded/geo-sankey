@@ -143,13 +143,13 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   [graph, llz.zoom, singlePoly, wing, angle, bezierN, nodeApproach, creaseSkip, widthScale, widthUnit, mPerWeight])
 
   const nodePoints = useMemo(() => {
-    const filter = showNodes === 2 || editMode ? 'all' as const : showNodes === 1 ? 'endpoints' as const : 'all' as const
+    const filter = showNodes === 2 ? 'all' as const : showNodes === 1 ? 'endpoints' as const : 'all' as const
     return renderNodes(graph, filter)
-  }, [graph, showNodes, editMode])
+  }, [graph, showNodes])
 
   const edgeCenterlines = useMemo(
-    () => editMode ? renderEdgeCenterlines(graph, graphOpts) : null,
-    [editMode, graph, llz.zoom, bezierN, nodeApproach, widthScale, widthUnit, mPerWeight],
+    () => renderEdgeCenterlines(graph, graphOpts),
+    [graph, llz.zoom, bezierN, nodeApproach, widthScale, widthUnit, mPerWeight],
   )
 
   const debugGeo = useMemo(() =>
@@ -215,7 +215,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
 
   // Edit mode: click = select/replace, shift-click = toggle in set, dbl-click = add node
   const onMapClick = useCallback((e: any) => {
-    if (!editMode) return
     const shift = (e.originalEvent as MouseEvent | undefined)?.shiftKey
     const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
     const centerlineFeatures = e.features?.filter((f: any) => f.layer?.id === 'edge-centerlines-hit')
@@ -224,7 +223,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     // Node clicks take precedence over ribbon clicks
     if (nodeFeatures?.length) {
       const nodeId = nodeFeatures[0].properties.id
-      if (edgeSource) {
+      if (editMode && edgeSource) {
         addEdge(edgeSource, nodeId)
         setEdgeSource(null)
         return
@@ -388,6 +387,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             title: 'View',
             defaultOpen: true,
             children: <>
+              <Check label="Edit mode" checked={editMode} onChange={v => { setEditMode(v); sessionStorage.setItem('geo-sankey-edit', v ? '1' : ''); if (!v) { setSelections([]); setEdgeSource(null) } }} />
               <Check label="Single-poly" checked={singlePoly} onChange={setSinglePoly} />
               <Check label="Ring points" checked={showRing} onChange={setShowRing} />
               <Check label="Graph overlay" checked={showGraph} onChange={setShowGraph} />
@@ -437,12 +437,13 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           onMouseMove={dragging ? undefined : onHover}
           onMouseDown={editMode ? onNodeDragStart : undefined}
           onDblClick={editMode ? onMapDblClick : undefined}
-          onClick={editMode ? onMapClick : undefined}
+          onClick={onMapClick}
           onMouseLeave={() => setTooltip(null)}
           interactiveLayerIds={[
             ...(showRing ? ['ring-edge-lines', 'ring-edge-labels', 'ring-circles'] : []),
-            ...(showNodes > 0 || editMode ? ['node-circles'] : []),
-            ...(editMode ? ['flows-fill', 'edge-centerlines-hit'] : []),
+            'node-circles',
+            'flows-fill',
+            'edge-centerlines-hit',
           ]}
           dragPan={!dragging}
         >
@@ -452,7 +453,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
               'fill-opacity': ['*', opacity, ['coalesce', ['get', 'opacity'], 1]],
             }} />
           </Source>
-          {editMode && edgeCenterlines && (
+          {edgeCenterlines && (
             <Source id="edge-centerlines" type="geojson" data={edgeCenterlines}>
               <Layer id="edge-centerlines-hit" type="line" paint={{
                 'line-color': '#000',
