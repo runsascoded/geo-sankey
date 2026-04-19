@@ -12,6 +12,7 @@ import SelectionSection from './SelectionSection'
 import { useGraphState } from './hooks/useGraphState'
 import { useGraphSelection, selRefEq } from './hooks/useGraphSelection'
 import type { SelectionRef } from './hooks/useGraphSelection'
+import { useGraphMutations } from './hooks/useGraphMutations'
 import { useSceneIO } from './useSceneIO'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
@@ -48,118 +49,13 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const { graph, setGraph, pushGraph, pushHistory, undo, redo, dispatch } = gs
   const sel = useGraphSelection(graph)
   const { selections, setSelections, selection, toggleOrReplace, selectedNodes, selectedEdges, selectedNodeIds, selectedEdgeIds, resolvedWeights, nodeRoleOf, aggEdge } = sel
+  const mut = useGraphMutations(gs, sel)
+  const { renameNode, duplicateNodes, updateNode, addNode, deleteNode, addEdge, updateEdge, updateEdgeStyle, deleteEdge, reverseEdge, splitEdgeAt, applyEdgeStyle, applyEdgeWeight } = mut
   const [llz, setLLZ] = useLLZ(defaults)
   const mapRef = useRef<any>(null)
   const [editMode, setEditMode] = useState(() => sessionStorage.getItem('geo-sankey-edit') === '1')
   const [dragging, setDragging] = useState<string | null>(null)
   const [edgeSource, setEdgeSource] = useState<string | null>(null)
-
-  // Graph mutation helpers
-  const renameNode = useCallback((oldId: string, newId: string) => {
-    if (!newId || newId === oldId) return
-    pushGraph(g => {
-      if (g.nodes.some(n => n.id === newId)) return g  // conflict — silently no-op
-      return {
-        nodes: g.nodes.map(n => n.id === oldId ? { ...n, id: newId } : n),
-        edges: g.edges.map(e => ({
-          ...e,
-          from: e.from === oldId ? newId : e.from,
-          to: e.to === oldId ? newId : e.to,
-        })),
-      }
-    })
-    setSelections(prev => prev.map(r =>
-      r.type === 'node' && r.id === oldId ? { type: 'node', id: newId }
-      : r.type === 'edge' && (r.from === oldId || r.to === oldId) ? {
-        type: 'edge',
-        from: r.from === oldId ? newId : r.from,
-        to: r.to === oldId ? newId : r.to,
-      }
-      : r
-    ))
-  }, [pushGraph, setSelections])
-  const duplicateNodes = useCallback((ids: string[]) => {
-    if (ids.length === 0) return
-    const idSet = new Set(ids)
-    const offset = 0.001  // ~100m at mid-latitudes — visible but adjacent
-    const ts = Date.now().toString(36)
-    const renames = new Map<string, string>(ids.map((id, i) => [id, `${id}-copy${ts}-${i}`]))
-    pushGraph(g => {
-      const newNodes = g.nodes.filter(n => idSet.has(n.id)).map(n => ({
-        ...n,
-        id: renames.get(n.id)!,
-        pos: [n.pos[0] + offset, n.pos[1] + offset] as [number, number],
-      }))
-      // Edges between two copied nodes get duplicated; edges crossing the
-      // selection boundary stay attached to the originals.
-      const newEdges = g.edges
-        .filter(e => idSet.has(e.from) && idSet.has(e.to))
-        .map(e => ({ ...e, from: renames.get(e.from)!, to: renames.get(e.to)! }))
-      return { nodes: [...g.nodes, ...newNodes], edges: [...g.edges, ...newEdges] }
-    })
-    setSelections([...renames.values()].map(id => ({ type: 'node' as const, id })))
-  }, [pushGraph, setSelections])
-  const updateNode = useCallback((id: string, patch: Partial<{ pos: [number, number]; bearing: number; label: string; velocity: number }>) => {
-    pushGraph(g => ({
-      ...g,
-      nodes: g.nodes.map(n => n.id === id ? { ...n, ...patch } : n),
-    }))
-  }, [pushGraph])
-  const addNode = useCallback((pos: [number, number]) => {
-    const id = `n${Date.now()}`
-    pushGraph(g => ({ ...g, nodes: [...g.nodes, { id, pos }] }))
-    setSelections([{ type: 'node', id }])
-  }, [pushGraph, setSelections])
-  const deleteNode = useCallback((id: string) => {
-    pushGraph(g => ({
-      nodes: g.nodes.filter(n => n.id !== id),
-      edges: g.edges.filter(e => e.from !== id && e.to !== id),
-    }))
-    setSelections(prev => prev.filter(r => !(r.type === 'node' && r.id === id)))
-  }, [pushGraph, setSelections])
-  const addEdge = useCallback((from: string, to: string) => {
-    if (from === to) return
-    // Default new edges to 'auto' weight — flow-conservation will derive
-    // the value from upstream inputs (sources stay explicit since they
-    // have no inputs to derive from).
-    pushGraph(g => {
-      const fromHasInputs = g.edges.some(e => e.to === from)
-      const weight: number | 'auto' = fromHasInputs ? 'auto' : 10
-      return { ...g, edges: [...g.edges, { from, to, weight }] }
-    })
-    setSelections([{ type: 'edge', from, to }])
-  }, [pushGraph, setSelections])
-  const updateEdge = useCallback((from: string, to: string, patch: Partial<{ weight: number | 'auto' }>) => {
-    pushGraph(g => ({
-      ...g,
-      edges: g.edges.map(e => e.from === from && e.to === to ? { ...e, ...patch } : e),
-    }))
-  }, [pushGraph])
-  const updateEdgeStyle = useCallback((from: string, to: string, patch: Partial<{ color: string; opacity: number; widthScale: number }>) => {
-    pushGraph(g => ({
-      ...g,
-      edges: g.edges.map(e => e.from === from && e.to === to
-        ? { ...e, style: { ...e.style, ...patch } }
-        : e),
-    }))
-  }, [pushGraph])
-  const deleteEdge = useCallback((from: string, to: string) => {
-    pushGraph(g => ({ ...g, edges: g.edges.filter(e => !(e.from === from && e.to === to)) }))
-    setSelections(prev => prev.filter(r => !(r.type === 'edge' && r.from === from && r.to === to)))
-  }, [pushGraph, setSelections])
-  const reverseEdge = useCallback((from: string, to: string) => {
-    pushGraph(g => {
-      // Refuse if the reverse already exists (would conflict).
-      if (g.edges.some(e => e.from === to && e.to === from)) return g
-      return {
-        ...g,
-        edges: g.edges.map(e => e.from === from && e.to === to
-          ? { ...e, from: to, to: from }
-          : e),
-      }
-    })
-    setSelections([{ type: 'edge', from: to, to: from }])
-  }, [pushGraph, setSelections])
   const [singlePoly, setSinglePoly] = useUrlState('sp', { encode: (v) => v ? undefined : '0', decode: (s) => s !== '0' })
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', intParam(defaultNodes))
@@ -256,14 +152,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     () => editMode ? renderEdgeCenterlines(graph, graphOpts) : null,
     [editMode, graph, llz.zoom, bezierN, nodeApproach, widthScale, widthUnit, mPerWeight],
   )
-
-  const applyEdgeStyle = useCallback((patch: Partial<{ color: string; opacity: number; widthScale: number }>) => {
-    for (const e of selectedEdges) updateEdgeStyle(e.from, e.to, patch)
-  }, [selectedEdges, updateEdgeStyle])
-
-  const applyEdgeWeight = useCallback((weight: number | 'auto') => {
-    for (const e of selectedEdges) updateEdge(e.from, e.to, { weight })
-  }, [selectedEdges, updateEdge])
 
   const debugGeo = useMemo(() =>
     showGraph ? renderFlowGraphDebug(graph, graphOpts) : null,
@@ -364,26 +252,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     if (edgeSource) setEdgeSource(null)
     if (!shift) setSelections([])
   }, [editMode, edgeSource, addEdge, setSelections, setEdgeSource])
-
-  const splitEdgeAt = useCallback((from: string, to: string, pos: [number, number]) => {
-    const id = `n${Date.now()}`
-    pushGraph(g => {
-      const e = g.edges.find(x => x.from === from && x.to === to)
-      if (!e) return g
-      const baseStyle = e.style
-      // New through-node inherits no bearing/velocity (auto-derived from edge tangent
-      // because it has 1 in / 1 out). Splits preserve the edge's weight on the first
-      // half (explicit) and let the second half ride 'auto' through-node flow.
-      const newNode = { id, pos }
-      const firstHalf = { from, to: id, weight: e.weight, ...(baseStyle ? { style: baseStyle } : {}) }
-      const secondHalf = { from: id, to, weight: 'auto' as const, ...(baseStyle ? { style: baseStyle } : {}) }
-      return {
-        nodes: [...g.nodes, newNode],
-        edges: g.edges.flatMap(x => x === e ? [firstHalf, secondHalf] : [x]),
-      }
-    })
-    setSelections([{ type: 'node', id }])
-  }, [pushGraph, setSelections])
 
   const onMapDblClick = useCallback((e: any) => {
     if (!editMode) return
