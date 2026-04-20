@@ -44,18 +44,30 @@ export interface FlowMapViewProps {
 }
 
 export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults, defaultNodes = 2 }: FlowMapViewProps) {
-  const gs = useGraphState(initialGraph)
+  const ssKey = `geo-sankey-graph:${title}`
+  const gs = useGraphState(() => {
+    try {
+      const stored = sessionStorage.getItem(ssKey)
+      if (stored) return JSON.parse(stored) as FlowGraph
+    } catch {}
+    return initialGraph
+  })
   const { graph, setGraph, pushGraph, pushHistory, undo, redo, dispatch } = gs
+
+  // Persist graph to sessionStorage on every change (survives HMR)
+  useEffect(() => {
+    if (graph === initialGraph) {
+      sessionStorage.removeItem(ssKey)
+    } else {
+      sessionStorage.setItem(ssKey, JSON.stringify(graph))
+    }
+  }, [graph, initialGraph, ssKey])
   const sel = useGraphSelection(graph)
   const { selections, setSelections, selection, toggleOrReplace, selectedNodes, selectedEdges, selectedNodeIds, selectedEdgeIds, resolvedWeights, nodeRoleOf, aggEdge } = sel
   const mut = useGraphMutations(gs, sel)
   const { renameNode, duplicateNodes, updateNode, addNode, deleteNode, addEdge, updateEdge, updateEdgeStyle, deleteEdge, reverseEdge, splitEdgeAt, applyEdgeStyle, applyEdgeWeight } = mut
   const [llz, setLLZ] = useLLZ(defaults)
   const mapRef = useRef<any>(null)
-  const [editMode, setEditMode] = useState(() => {
-    const stored = sessionStorage.getItem('geo-sankey-edit')
-    return stored != null ? stored === '1' : true  // default ON
-  })
   const [dragging, setDragging] = useState<string | null>(null)
   const [edgeSource, setEdgeSource] = useState<string | null>(null)
   const [singlePoly, setSinglePoly] = useUrlState('sp', { encode: (v) => v ? undefined : '0', decode: (s) => s !== '0' })
@@ -99,7 +111,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     copyScene: { label: 'Copy scene as TS (full)', group: 'File', defaultBindings: ['cmd+shift+c', 'ctrl+shift+c'], handler: () => sceneIO.copySceneAsTS() },
     copyGraph: { label: 'Copy graph as TS (paste into source)', group: 'File', defaultBindings: ['cmd+shift+g', 'ctrl+shift+g'], handler: () => sceneIO.copyGraphAsTS() },
     pasteScene: { label: 'Paste scene / graph', group: 'File', defaultBindings: ['cmd+shift+v', 'ctrl+shift+v'], handler: () => sceneIO.openPaste() },
-    toggleEdit: { label: 'Toggle edit mode', group: 'Edit', defaultBindings: ['e'], handler: () => { setEditMode(m => { const v = !m; sessionStorage.setItem('geo-sankey-edit', v ? '1' : ''); return v }); setSelections([]); setEdgeSource(null) } },
     deleteSelected: { label: 'Delete selected', group: 'Edit', defaultBindings: ['Backspace', 'Delete'], handler: () => {
       if (selections.length === 0) return
       // Snapshot for a single undo even when deleting several
@@ -110,6 +121,19 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     }},
     clearSelection: { label: 'Clear selection', group: 'Edit', defaultBindings: ['Escape'], handler: () => setSelections([]) },
     duplicateSelection: { label: 'Duplicate selected nodes', group: 'Edit', defaultBindings: ['cmd+d', 'ctrl+d'], handler: () => duplicateNodes(selectedNodeIds) },
+    reverseAll: { label: 'Reverse flow direction', group: 'Edit', defaultBindings: [], handler: () => {
+      pushGraph(g => ({
+        ...g,
+        edges: g.edges.map(e => ({ ...e, from: e.to, to: e.from })),
+        nodes: g.nodes.map(n => n.bearing != null ? { ...n, bearing: (n.bearing + 180) % 360 } : n),
+      }))
+      setSelections([])
+    }},
+    resetGraph: { label: 'Reset to original', group: 'Edit', defaultBindings: [], handler: () => {
+      pushGraph(initialGraph)
+      setSelections([])
+      sessionStorage.removeItem(ssKey)
+    }},
     undo: { label: 'Undo', group: 'Edit', defaultBindings: ['cmd+z', 'ctrl+z'], handler: undo },
     redo: { label: 'Redo', group: 'Edit', defaultBindings: ['cmd+shift+z', 'ctrl+shift+z'], handler: redo },
   })
@@ -226,7 +250,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     // Node clicks take precedence over ribbon clicks
     if (nodeFeatures?.length) {
       const nodeId = nodeFeatures[0].properties.id
-      if (editMode && edgeSource) {
+      if (edgeSource) {
         addEdge(edgeSource, nodeId)
         setEdgeSource(null)
         return
@@ -252,10 +276,9 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     // Clicked empty map
     if (edgeSource) setEdgeSource(null)
     if (!shift) setSelections([])
-  }, [editMode, edgeSource, addEdge, setSelections, setEdgeSource])
+  }, [edgeSource, addEdge, setSelections, setEdgeSource])
 
   const onMapDblClick = useCallback((e: any) => {
-    if (!editMode) return
     e.preventDefault()
     // If dbl-click landed on an edge centerline, split that edge instead of
     // adding a free-floating node.
@@ -271,16 +294,15 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       }
     }
     addNode([e.lngLat.lat, e.lngLat.lng])
-  }, [editMode, addNode])
+  }, [addNode])
 
   // Edit mode: drag with document-level listeners for reliability
   const onNodeDragStart = useCallback((e: any) => {
-    if (!editMode) return
     const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
     if (nodeFeatures?.length) {
       setDragging(nodeFeatures[0].properties.id)
     }
-  }, [editMode])
+  }, [])
 
   const graphRef = useRef(graph)
   graphRef.current = graph
@@ -352,11 +374,26 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       <h2>{title}</h2>
       <p>{description}</p>
       <div className="map-container" style={{ position: 'relative' }}>
-        {editMode && <div style={{
-          position: 'absolute', top: 8, left: 8, zIndex: 21,
-          background: 'rgba(245, 158, 11, 0.95)', color: '#111',
-          padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-        }}>EDIT{edgeSource ? ` (edge from ${edgeSource} — click dest)` : ''}</div>}
+        {(() => {
+          const modified = graph !== initialGraph
+          const showBadge = edgeSource || modified
+          if (!showBadge) return null
+          return <div style={{
+            position: 'absolute', top: 8, left: 8, zIndex: 21,
+            display: 'flex', gap: 4, alignItems: 'center',
+          }}>
+            {edgeSource && <div style={{
+              background: 'rgba(245, 158, 11, 0.95)', color: '#111',
+              padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
+            }}>edge from {edgeSource} — click dest</div>}
+            {modified && <button onClick={() => { pushGraph(initialGraph); setSelections([]); sessionStorage.removeItem(ssKey) }} title="Reset to original graph"
+              style={{
+                background: 'rgba(239, 68, 68, 0.9)', color: '#fff',
+                border: 'none', borderRadius: 4, padding: '3px 8px',
+                fontSize: 11, fontWeight: 600, cursor: 'pointer',
+              }}>↺ Reset</button>}
+          </div>
+        })()}
         <Drawer sections={[
           {
             id: 'defaults',
@@ -390,7 +427,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             title: 'View',
             defaultOpen: true,
             children: <>
-              <Check label="Edit mode" checked={editMode} onChange={v => { setEditMode(v); sessionStorage.setItem('geo-sankey-edit', v ? '1' : ''); if (!v) { setSelections([]); setEdgeSource(null) } }} />
               <Check label="Single-poly" checked={singlePoly} onChange={setSinglePoly} />
               <Check label="Ring points" checked={showRing} onChange={setShowRing} />
               <Check label="Graph overlay" checked={showGraph} onChange={setShowGraph} />
@@ -403,6 +439,39 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                   <option value={2}>all</option>
                 </select>
               </Row>
+            </>,
+          },
+          {
+            id: 'actions',
+            title: 'Actions',
+            defaultOpen: false,
+            children: <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <button onClick={() => sceneIO.copyGraphAsTS()} style={{ fontSize: 11, textAlign: 'left', padding: '4px 8px' }}>
+                  Copy graph as TS
+                </button>
+                <button onClick={() => sceneIO.copySceneAsTS()} style={{ fontSize: 11, textAlign: 'left', padding: '4px 8px' }}>
+                  Copy scene as TS (full)
+                </button>
+                <button onClick={() => sceneIO.exportSceneJSON()} style={{ fontSize: 11, textAlign: 'left', padding: '4px 8px' }}>
+                  Download JSON
+                </button>
+                <button onClick={() => sceneIO.exportSceneTS()} style={{ fontSize: 11, textAlign: 'left', padding: '4px 8px' }}>
+                  Download .ts file
+                </button>
+                <button onClick={() => sceneIO.openImport()} style={{ fontSize: 11, textAlign: 'left', padding: '4px 8px' }}>
+                  Import file
+                </button>
+                <button onClick={() => sceneIO.openPaste()} style={{ fontSize: 11, textAlign: 'left', padding: '4px 8px' }}>
+                  Paste scene / graph
+                </button>
+                {graph !== initialGraph && (
+                  <button onClick={() => { pushGraph(initialGraph); setSelections([]); sessionStorage.removeItem(ssKey) }}
+                    style={{ fontSize: 11, textAlign: 'left', padding: '4px 8px', color: '#ef4444' }}>
+                    Reset to original
+                  </button>
+                )}
+              </div>
             </>,
           },
           ...(selections.length > 0 ? [{
@@ -438,8 +507,8 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           mapStyle={MAP_STYLES[theme]}
           onMove={dragging ? undefined : onMove}
           onMouseMove={dragging ? undefined : onHover}
-          onMouseDown={editMode ? onNodeDragStart : undefined}
-          onDblClick={editMode ? onMapDblClick : undefined}
+          onMouseDown={onNodeDragStart}
+          onDblClick={onMapDblClick}
           onClick={onMapClick}
           onMouseLeave={() => setTooltip(null)}
           interactiveLayerIds={[
@@ -494,7 +563,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
                 }} />
             </Source>
           )}
-          {(showNodes > 0 || editMode) && (
+          {showNodes > 0 && (
             <Source id="nodes" type="geojson" data={nodePoints}>
               <Layer id="node-circles" type="circle"
                 paint={{
@@ -562,7 +631,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
         {tooltip && (
           <div style={{ position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 10, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px', borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10 }}>{tooltip.text}</div>
         )}
-        {editMode && edgeSource && cursor && (() => {
+        {edgeSource && cursor && (() => {
           const src = graph.nodes.find(n => n.id === edgeSource)
           const map = mapRef.current?.getMap?.()
           if (!src || !map) return null

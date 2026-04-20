@@ -20,14 +20,42 @@ interface Props {
  * Side drawer overlaying the map. Stacks collapsible sections.
  * Fully collapsible via a chevron tab so it never fully occludes the map.
  */
+const SS_DRAWER_KEY = 'geo-sankey-drawer'
+
+function loadDrawerState(): { collapsed?: boolean; openIds?: string[] } | null {
+  try {
+    const s = sessionStorage.getItem(SS_DRAWER_KEY)
+    return s ? JSON.parse(s) : null
+  } catch { return null }
+}
+
+function saveDrawerState(collapsed: boolean, openIds: Set<string>) {
+  sessionStorage.setItem(SS_DRAWER_KEY, JSON.stringify({ collapsed, openIds: [...openIds] }))
+}
+
 export default function Drawer({ sections, side = 'right', defaultCollapsed = false }: Props) {
-  const [collapsed, setCollapsed] = useState(defaultCollapsed)
-  const [openIds, setOpenIds] = useState<Set<string>>(() =>
-    new Set(sections.filter(s => s.defaultOpen !== false).map(s => s.id))
+  const stored = loadDrawerState()
+  const [collapsed, setCollapsedRaw] = useState(stored?.collapsed ?? defaultCollapsed)
+  const [openIds, setOpenIdsRaw] = useState<Set<string>>(() =>
+    stored?.openIds
+      ? new Set(stored.openIds)
+      : new Set(sections.filter(s => s.defaultOpen !== false).map(s => s.id))
   )
+  const setCollapsed = (v: boolean | ((p: boolean) => boolean)) => {
+    setCollapsedRaw(prev => {
+      const next = typeof v === 'function' ? v(prev) : v
+      saveDrawerState(next, openIds)
+      return next
+    })
+  }
+  const setOpenIds = (fn: (prev: Set<string>) => Set<string>) => {
+    setOpenIdsRaw(prev => {
+      const next = fn(prev)
+      saveDrawerState(collapsed, next)
+      return next
+    })
+  }
   const [seenIds, setSeenIds] = useState<Set<string>>(() => new Set(sections.map(s => s.id)))
-  // Auto-open newly-appearing sections that default to open (e.g. Selection
-  // appears on first selection — it should be open, not collapsed).
   useEffect(() => {
     const newlyAdded = sections.filter(s => !seenIds.has(s.id))
     if (newlyAdded.length === 0) return

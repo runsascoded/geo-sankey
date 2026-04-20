@@ -49,8 +49,12 @@ export interface UseGraphState {
   dispatch: React.Dispatch<GraphAction>
 }
 
-export function useGraphState(initial: FlowGraph): UseGraphState {
-  const [gs, dispatch] = useReducer(graphReducer, { graph: initial, past: [], future: [] })
+export function useGraphState(initial: FlowGraph | (() => FlowGraph)): UseGraphState {
+  const [gs, dispatch] = useReducer(graphReducer, null, () => ({
+    graph: typeof initial === 'function' ? initial() : initial,
+    past: [] as FlowGraph[],
+    future: [] as FlowGraph[],
+  }))
   const setGraph = useCallback((next: FlowGraph | ((g: FlowGraph) => FlowGraph)) => {
     dispatch({ type: 'set', next, history: false })
   }, [])

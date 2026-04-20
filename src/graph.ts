@@ -217,6 +217,22 @@ function perpL(bearing: number): [number, number] {
   return [sin(rad), -cos(rad)]
 }
 
+/** Screen-space perpendicular offset matching offsetCurve's formula.
+ *  Returns [dLon, dLat] for a `dist` offset perpendicular-left of `bearing`.
+ *  `dist` is in lat-degrees (same units as halfW from pxToHalfDeg).
+ *  The offset accounts for Mercator lon/lat aspect ratio so the screen-
+ *  pixel distance equals `dist * px_per_lat_degree` (= widthPx/2). */
+function perpOffset(bearing: number, dist: number, ls: number): [number, number] {
+  const rad = bearing * PI / 180
+  const cB = cos(rad), sB = sin(rad)
+  // Unit perp in [lon, lat*ls] screen space, then convert to geographic:
+  // dLon = pLon * dist * ls, dLat = pLat * dist
+  const pMag = Math.sqrt(cB * cB * ls * ls + sB * sB)
+  const pLon = -cB * ls / pMag
+  const pLat = sB / pMag
+  return [pLon * dist * ls, pLat * dist]
+}
+
 function pxW(pxPerWeight: number | ((w: number) => number), weight: number): number {
   return typeof pxPerWeight === 'number' ? weight * pxPerWeight : pxPerWeight(weight)
 }
@@ -344,10 +360,14 @@ function offsetCurve(
       }
     }
 
-    // Apply offset: pLon is screen-x (lon degrees), pLat is screen-y,
-    // convert back to lat by dividing by ls
-    left.push([path[i][1] + pLon * halfW, path[i][0] + pLat * halfW / ls])
-    right.push([path[i][1] - pLon * halfW, path[i][0] - pLat * halfW / ls])
+    // Apply offset. `halfW` is in lat-degrees; convert:
+    //   - LON offset (deg lon) = pLon * halfW * ls (lat→lon scaling at refLat)
+    //   - LAT offset (deg lat) = pLat * halfW (no conversion)
+    // Dividing lat by ls / omitting ls from lon both shrink the ribbon by
+    // 1/ls ≈ cos(refLat), which is the bug described in
+    // specs/offsetCurve-ls-scaling.md.
+    left.push([path[i][1] + pLon * halfW * ls, path[i][0] + pLat * halfW])
+    right.push([path[i][1] - pLon * halfW * ls, path[i][0] - pLat * halfW])
   }
 
   return { left, right }
@@ -427,16 +447,13 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
     const outW = outEdgesOf.get(n.id)!.reduce((s, e) => s + scaledW(e), 0)
     const throughW = max(inW, outW)
     const halfW = pxToHalfDeg(pxW(pxPerWeight, throughW), zoom, geoScale, refLat)
-    // Face corners: perpRibbon = [-sin(B), cos(B)] for ribbon convention
     const bRad = n.bearing * PI / 180
-    // Screen-space directions for bearing B:
-    // Forward: dLon = sin(B)*d, dLat = cos(B)*d/ls
-    // Perp left: dLon = -cos(B)*d, dLat = sin(B)*d/ls
     const fwdLon = sin(bRad), fwdLat = cos(bRad) / ls
-    const perpLon = -cos(bRad), perpLat = sin(bRad) / ls
+    // Screen-space perpendicular offset (matching offsetCurve's formula)
+    const [pDLon, pDLat] = perpOffset(n.bearing, halfW, ls)
     const isSink = outEdgesOf.get(n.id)!.length === 0 && inW > 0
     const ap = isSink
-      ? halfW * nodeApproach + halfW * 2 * arrowLen
+      ? halfW * 2 * arrowLen
       : halfW * nodeApproach
     layouts.set(n.id, {
       node: n,
@@ -449,11 +466,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
       approachLen: ap,
       isSink,
       isSource: inEdgesOf.get(n.id)!.length === 0 && outW > 0,
-      // Face corners [lon, lat] — screen-space perpendicular to bearing
-      inFaceLeft:   [n.pos[1] - fwdLon * ap + perpLon * halfW, n.pos[0] - fwdLat * ap + perpLat * halfW],
-      inFaceRight:  [n.pos[1] - fwdLon * ap - perpLon * halfW, n.pos[0] - fwdLat * ap - perpLat * halfW],
-      outFaceLeft:  [n.pos[1] + fwdLon * ap + perpLon * halfW, n.pos[0] + fwdLat * ap + perpLat * halfW],
-      outFaceRight: [n.pos[1] + fwdLon * ap - perpLon * halfW, n.pos[0] + fwdLat * ap - perpLat * halfW],
+      // Face corners [lon, lat] — perpOffset matches offsetCurve width
+      inFaceLeft:   [n.pos[1] - fwdLon * ap + pDLon, n.pos[0] - fwdLat * ap + pDLat],
+      inFaceRight:  [n.pos[1] - fwdLon * ap - pDLon, n.pos[0] - fwdLat * ap - pDLat],
+      outFaceLeft:  [n.pos[1] + fwdLon * ap + pDLon, n.pos[0] + fwdLat * ap + pDLat],
+      outFaceRight: [n.pos[1] + fwdLon * ap - pDLon, n.pos[0] + fwdLat * ap - pDLat],
     })
   }
 
@@ -481,9 +498,7 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
   for (const n of graph.nodes) {
     const layout = layouts.get(n.id)!
     const bRad = n.bearing * PI / 180
-    // Screen-space forward/perp (consistent with face corners)
     const sFwdLon = sin(bRad), sFwdLat = cos(bRad) / ls
-    const sPerpLon = -cos(bRad), sPerpLat = sin(bRad) / ls
 
     // Input slots
     const inEdges = inEdgesOf.get(n.id)!
@@ -500,10 +515,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
       const centerOffset = -inBasePx / 2 + inCum + ePx / 2
       inCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
+      const [sDLon, sDLat] = perpOffset(n.bearing, offsetDeg, ls)
       layout.inSlots.set(eid(e), {
         pos: [
-          n.pos[0] - sFwdLat * layout.approachLen + sPerpLat * offsetDeg,
-          n.pos[1] - sFwdLon * layout.approachLen + sPerpLon * offsetDeg,
+          n.pos[0] - sFwdLat * layout.approachLen + sDLat,
+          n.pos[1] - sFwdLon * layout.approachLen + sDLon,
         ],
         halfW: pxToHalfDeg(ePx, zoom, geoScale, refLat),
         bearing: n.bearing,
@@ -524,10 +540,11 @@ function computeLayout(graph: FlowGraph, opts: FlowGraphOpts, alignThroughWidth 
       const centerOffset = -outBasePx / 2 + outCum + ePx / 2
       outCum += ePx
       const offsetDeg = pxToDeg(centerOffset, zoom, geoScale, refLat)
+      const [sDLon, sDLat] = perpOffset(n.bearing, offsetDeg, ls)
       layout.outSlots.set(eid(e), {
         pos: [
-          n.pos[0] + sFwdLat * layout.approachLen + sPerpLat * offsetDeg,
-          n.pos[1] + sFwdLon * layout.approachLen + sPerpLon * offsetDeg,
+          n.pos[0] + sFwdLat * layout.approachLen + sDLat,
+          n.pos[1] + sFwdLon * layout.approachLen + sDLon,
         ],
         halfW: pxToHalfDeg(ePx, zoom, geoScale, refLat),
         bearing: n.bearing,
@@ -903,14 +920,15 @@ export function renderFlowGraphSinglePoly(
   function nodeBoundaryCorner(nodeId: string, side: 'left' | 'right', face: 'in' | 'out'): [number, number] {
     const layout = layouts.get(nodeId)!
     const n = layout.node
-    const nodeLs = lngScale(refLat)
-    const [fLat, fLon] = fwd(n.bearing)
-    const [pLat, pLon] = perpL(n.bearing)
+    const bRad = n.bearing * PI / 180
+    const fwdLon = sin(bRad), fwdLat = cos(bRad) / ls
+    const [pDLon, pDLat] = perpOffset(n.bearing, layout.halfW, ls)
     const sign = side === 'left' ? 1 : -1
     const faceSign = face === 'out' ? 1 : -1
-    const lat = n.pos[0] + fLat * layout.approachLen * faceSign + pLat * layout.halfW * sign
-    const lon = n.pos[1] + fLon * layout.approachLen * faceSign * nodeLs + pLon * layout.halfW * sign * nodeLs
-    return [lon, lat]
+    return [
+      n.pos[1] + fwdLon * layout.approachLen * faceSign + pDLon * sign,
+      n.pos[0] + fwdLat * layout.approachLen * faceSign + pDLat * sign,
+    ]
   }
 
   // Track which sources get traced (to avoid duplicate standalone traces)
@@ -937,19 +955,16 @@ export function renderFlowGraphSinglePoly(
     if (layout.isSink) {
       const n = layout.node
       const bRad = n.bearing * PI / 180
-      // Screen-space directions
-      const sFwd: [number, number] = [sin(bRad), cos(bRad) / ls]  // [dLon, dLat]
-      const sPerp: [number, number] = [-cos(bRad), sin(bRad) / ls] // [dLon, dLat]
+      const sFwdLon = sin(bRad), sFwdLat = cos(bRad) / ls
       const arrowH = layout.halfW * 2 * arrowLen
-      // Arrow base position (arrowH behind tip)
-      const abLon = n.pos[1] - sFwd[0] * arrowH
-      const abLat = n.pos[0] - sFwd[1] * arrowH
-      const hw = layout.halfW
-      const trunkL: [number, number] = [abLon + sPerp[0] * hw, abLat + sPerp[1] * hw]
-      const trunkR: [number, number] = [abLon - sPerp[0] * hw, abLat - sPerp[1] * hw]
-      const wingW = hw * arrowWing
-      const wingL: [number, number] = [abLon + sPerp[0] * wingW, abLat + sPerp[1] * wingW]
-      const wingR: [number, number] = [abLon - sPerp[0] * wingW, abLat - sPerp[1] * wingW]
+      const abLon = n.pos[1] - sFwdLon * arrowH
+      const abLat = n.pos[0] - sFwdLat * arrowH
+      const [pDLon, pDLat] = perpOffset(n.bearing, layout.halfW, ls)
+      const trunkL: [number, number] = [abLon + pDLon, abLat + pDLat]
+      const trunkR: [number, number] = [abLon - pDLon, abLat - pDLat]
+      const [wDLon, wDLat] = perpOffset(n.bearing, layout.halfW * arrowWing, ls)
+      const wingL: [number, number] = [abLon + wDLon, abLat + wDLat]
+      const wingR: [number, number] = [abLon - wDLon, abLat - wDLat]
       const tip: [number, number] = [n.pos[1], n.pos[0]]
       ring.push(trunkL, wingL, tip, wingR, trunkR)
       return
