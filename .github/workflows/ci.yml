@@ -21,12 +21,54 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 
+  build-site:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: cd site && pnpm build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy-site:
+    needs: build-site
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
   build-dist:
     needs: build-and-test
     if: github.ref == 'refs/heads/main'
     uses: runsascoded/npm-dist/.github/workflows/build-dist.yml@v1
     with:
-      preserve_dirs: react
+      # `dist/` includes built src/ + a copy of react/ (see `build` in package.json).
+      # Default mode (no preserve_dirs) flattens dist/* to the dist branch root.
       exports_map: '{"./src/index.ts": {"types": "./index.d.ts", "import": "./index.js"}}'
       pkg_kvs: |
         {
