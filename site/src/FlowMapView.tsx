@@ -3,7 +3,7 @@ import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
 import { useActions } from 'use-kbd'
-import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes } from 'geo-sankey'
+import { renderFlowGraph, renderFlowGraphSinglePoly, renderFlowGraphDebug, renderEdgeCenterlines, renderNodes, flowFillPaint } from 'geo-sankey'
 import type { FlowGraph, FlowGraphOpts } from 'geo-sankey'
 import BearingDial from './BearingDial'
 import {
@@ -390,11 +390,9 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           dragPan={drag.dragPan}
         >
           <Source id="flows" type="geojson" data={geojson}>
-            <Layer id="flows-fill" type="fill" paint={{
-              'fill-color': ['get', 'color'],
+            <Layer id="flows-fill" type="fill" paint={flowFillPaint({
               'fill-opacity': ['*', opacity, ['coalesce', ['get', 'opacity'], 1]],
-              'fill-antialias': false,
-            }} />
+            })} />
           </Source>
           {edgeCenterlines && (
             <Source id="edge-centerlines" type="geojson" data={edgeCenterlines}>

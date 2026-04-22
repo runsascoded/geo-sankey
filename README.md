@@ -82,6 +82,25 @@ spline constraint). Undefined → auto-heuristic.
 - **`renderFlowGraphDebug`** — debug geometry: bezier center lines, approach rectangles, arrowhead outlines
 - **`renderEdgeCenterlines`** — per-edge bezier LineStrings (for hit-testing / selection overlays)
 
+### MapLibre / Mapbox paint defaults (`flowFillPaint`)
+
+When rendering multiple translucent ribbons that overlap, MapLibre's default
+`fill-antialias: true` runs a second pass that strokes each feature's
+boundary in draw order — the earlier-drawn (underneath) polygon's edge ends
+up stroked *on top of* the polygon that was supposed to cover it, producing
+a "ghost outline" artifact. `flowFillPaint()` returns a paint spec with
+`fill-antialias: false` plus sensible defaults; any prop can be overridden:
+
+```tsx
+import { flowFillPaint } from 'geo-sankey'
+
+<Layer id="flows-fill" type="fill"
+       paint={flowFillPaint({ 'fill-opacity': 0.85 })} />
+```
+
+The paint spec is plain data, so this works with both `react-map-gl/maplibre`
+and `react-map-gl/mapbox` — no map-library runtime dep.
+
 ## React Hooks (`geo-sankey/react`)
 
 Composable hooks for building editing UIs on top of the geometry core:
