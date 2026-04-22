@@ -1,18 +1,24 @@
 # geo-sankey
+Width-proportional flow maps
 
-Geometry library for geographic flow maps: width-proportional ribbon polygons with merge/split layout on real maps. Outputs GeoJSON — no rendering dependencies, works with any map renderer (MapLibre, Leaflet, deck.gl, etc.).
+- Supports merges and splits, edges are Bezier polylines
+- Outputs GeoJSON — no rendering dependencies, works with any map renderer (MapLibre, Leaflet, deck.gl, etc.).
 
-**[Live Demo →][demo]** · [geo-sankey.rbw.sh][demo]
+**Live demo: [geo-sankey.rbw.sh][demo]**
 
-| [NY Waterway][nyw] ferry network (partial) | Simple Flow (debug overlays) |
-|---|---|
+| [NY Waterway][nyw] ferry routes   | Simple Flow with debug overlays        |
+|-----------------------------------|----------------------------------------|
 | [![HBT Ferry][hbt-img]][hbt-demo] | [![Simple Flow debug][sf-img]][sf-demo] |
 
 ## Install
 
+Not on npm yet — install from the `dist` branch:
+
 ```bash
-pnpm add geo-sankey
+pnpm add github:runsascoded/geo-sankey#dist
 ```
+
+Or pin a specific build SHA: `pnpm add github:runsascoded/geo-sankey#<sha>`.
 
 ## Usage
 
