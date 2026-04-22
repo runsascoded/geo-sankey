@@ -40,9 +40,14 @@ export interface FlowMapViewProps {
   refLat: number
   defaults: { lat: number; lng: number; zoom: number }
   defaultNodes?: number
+  /** Seed values for opt sliders when URL has nothing set. */
+  initialOpts?: Partial<{
+    opacity: number; wing: number; angle: number; bezierN: number
+    nodeApproach: number; creaseSkip: number; widthScale: number
+  }>
 }
 
-export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults, defaultNodes = 2 }: FlowMapViewProps) {
+export default function FlowMapView({ graph: initialGraph, title, description, color, pxPerWeight, refLat, defaults, defaultNodes = 2, initialOpts = {} }: FlowMapViewProps) {
   const ssKey = `geo-sankey-graph:${title}`
   const gs = useGraphState(() => {
     try {
@@ -73,13 +78,13 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', intParam(defaultNodes))
   const [showGraph, setShowGraph] = useUrlState('graph', boolParam)
-  const [opacity, setOpacity] = useUrlState('o', numParam(0.5))
-  const [wing, setWing] = useUrlState('w', numParam(0.4))
-  const [angle, setAngle] = useUrlState('ang', intParam(45))
-  const [bezierN, setBezierN] = useUrlState('bn', intParam(20))
-  const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(0.5))
-  const [creaseSkip, setCreaseSkip] = useUrlState('cs', intParam(1))
-  const [widthScale, setWidthScale] = useUrlState('ws', numParam(1))
+  const [opacity, setOpacity] = useUrlState('o', numParam(initialOpts.opacity ?? 0.8))
+  const [wing, setWing] = useUrlState('w', numParam(initialOpts.wing ?? 0.5))
+  const [angle, setAngle] = useUrlState('ang', intParam(initialOpts.angle ?? 60))
+  const [bezierN, setBezierN] = useUrlState('bn', intParam(initialOpts.bezierN ?? 20))
+  const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(initialOpts.nodeApproach ?? 0.5))
+  const [creaseSkip, setCreaseSkip] = useUrlState('cs', intParam(initialOpts.creaseSkip ?? 1))
+  const [widthScale, setWidthScale] = useUrlState('ws', numParam(initialOpts.widthScale ?? 1))
   const [widthUnit, setWidthUnit] = useUrlState<'px' | 'm'>('wu', {
     encode: v => v === 'px' ? undefined : v,
     decode: s => s === 'm' ? 'm' : 'px',

@@ -76,7 +76,7 @@ function AppInner() {
     <div className="app">
       <header>
         <h1>geo-sankey</h1>
-        <span className="tagline">Width-proportional flow ribbons on geographic maps</span>
+        <span className="tagline">Width-proportional flow maps</span>
         <nav>
           {examples.map(e => {
             const params = new URLSearchParams(window.location.search)
