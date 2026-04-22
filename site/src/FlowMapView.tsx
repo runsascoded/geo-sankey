@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
+import { useMemo, useCallback, useRef, useEffect } from 'react'
 import MapGL, { Source, Layer } from 'react-map-gl/maplibre'
 import { useUrlState } from 'use-prms'
 import type { Param } from 'use-prms'
@@ -9,10 +9,9 @@ import BearingDial from './BearingDial'
 import {
   Drawer, Row, Slider, Check,
   NodeOverlay, SelectionSection,
-  useGraphState, useGraphSelection, useGraphMutations, useSceneIO,
-  selRefEq,
+  useGraphState, useGraphSelection, useGraphMutations,
+  useNodeDrag, useMapInteraction, useSceneIO,
 } from 'geo-sankey/react'
-import type { SelectionRef } from 'geo-sankey/react'
 import { useLLZ } from './llz'
 import { useTheme, MAP_STYLES } from './App'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -63,13 +62,13 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     }
   }, [graph, initialGraph, ssKey])
   const sel = useGraphSelection(graph)
-  const { selections, setSelections, selection, toggleOrReplace, selectedNodes, selectedEdges, selectedNodeIds, selectedEdgeIds, resolvedWeights, nodeRoleOf, aggEdge } = sel
+  const { selections, setSelections, selection, selectedNodes, selectedEdges, selectedNodeIds, selectedEdgeIds, resolvedWeights, nodeRoleOf, aggEdge } = sel
   const mut = useGraphMutations(gs, sel)
   const { renameNode, duplicateNodes, updateNode, addNode, deleteNode, addEdge, updateEdge, updateEdgeStyle, deleteEdge, reverseEdge, splitEdgeAt, applyEdgeStyle, applyEdgeWeight } = mut
   const [llz, setLLZ] = useLLZ(defaults)
   const mapRef = useRef<any>(null)
-  const [dragging, setDragging] = useState<string | null>(null)
-  const [edgeSource, setEdgeSource] = useState<string | null>(null)
+  const drag = useNodeDrag(mapRef, gs, sel)
+  const interaction = useMapInteraction(mapRef, sel, mut)
   const [singlePoly, setSinglePoly] = useUrlState('sp', { encode: (v) => v ? undefined : '0', decode: (s) => s !== '0' })
   const [showRing, setShowRing] = useUrlState('ring', boolParam)
   const [showNodes, setShowNodes] = useUrlState('nodes', intParam(defaultNodes))
@@ -222,88 +221,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     setLLZ({ lat: e.viewState.latitude, lng: e.viewState.longitude, zoom: e.viewState.zoom })
   }, [setLLZ])
 
-  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null)
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
-  const onHover = useCallback((e: any) => {
-    setCursor({ x: e.point.x, y: e.point.y })
-    if (e.features?.length) {
-      const f = e.features[0], p = f.properties
-      if (f.geometry?.type === 'Point') {
-        const [lon, lat] = f.geometry.coordinates
-        const label = p.id ? `${p.label ?? p.id}` : `pt #${p.idx}`
-        setTooltip({ x: e.point.x, y: e.point.y, text: `${label}\n${lat.toFixed(6)}, ${lon.toFixed(6)}` })
-      } else if (p.bearing != null) {
-        setTooltip({ x: e.point.x, y: e.point.y, text: `edge #${p.idx} bearing:${p.bearing}\u00B0\n${p.from} → ${p.to}` })
-      }
-    } else {
-      setTooltip(null)
-    }
-  }, [])
-
-  // Edit mode: click = select/replace, shift-click = toggle in set, dbl-click = add node
-  const onMapClick = useCallback((e: any) => {
-    const shift = (e.originalEvent as MouseEvent | undefined)?.shiftKey
-    const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
-    const centerlineFeatures = e.features?.filter((f: any) => f.layer?.id === 'edge-centerlines-hit')
-    const edgeFeatures = e.features?.filter((f: any) => f.layer?.id === 'flows-fill')
-
-    // Node clicks take precedence over ribbon clicks
-    if (nodeFeatures?.length) {
-      const nodeId = nodeFeatures[0].properties.id
-      if (edgeSource) {
-        addEdge(edgeSource, nodeId)
-        setEdgeSource(null)
-        return
-      }
-      toggleOrReplace({ type: 'node', id: nodeId }, !!shift)
-      return
-    }
-    if (centerlineFeatures?.length) {
-      const p = centerlineFeatures[0].properties
-      if (p.from && p.to) {
-        toggleOrReplace({ type: 'edge', from: p.from, to: p.to }, !!shift)
-        return
-      }
-    }
-    if (edgeFeatures?.length) {
-      const p = edgeFeatures[0].properties
-      // Only edge ribbons have from/to (through-node bodies in singlePoly don't)
-      if (p.from && p.to) {
-        toggleOrReplace({ type: 'edge', from: p.from, to: p.to }, !!shift)
-        return
-      }
-    }
-    // Clicked empty map
-    if (edgeSource) setEdgeSource(null)
-    if (!shift) setSelections([])
-  }, [edgeSource, addEdge, setSelections, setEdgeSource])
-
-  const onMapDblClick = useCallback((e: any) => {
-    e.preventDefault()
-    // If dbl-click landed on an edge centerline, split that edge instead of
-    // adding a free-floating node.
-    const map = mapRef.current?.getMap()
-    if (map) {
-      const hits = map.queryRenderedFeatures([e.point.x, e.point.y], { layers: ['edge-centerlines-hit'] })
-      if (hits?.length) {
-        const p = hits[0].properties as { from?: string; to?: string }
-        if (p.from && p.to) {
-          splitEdgeAt(p.from, p.to, [e.lngLat.lat, e.lngLat.lng])
-          return
-        }
-      }
-    }
-    addNode([e.lngLat.lat, e.lngLat.lng])
-  }, [addNode])
-
-  // Edit mode: drag with document-level listeners for reliability
-  const onNodeDragStart = useCallback((e: any) => {
-    const nodeFeatures = e.features?.filter((f: any) => f.layer?.id === 'node-circles')
-    if (nodeFeatures?.length) {
-      setDragging(nodeFeatures[0].properties.id)
-    }
-  }, [])
-
   const graphRef = useRef(graph)
   graphRef.current = graph
 
@@ -322,51 +239,6 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
     }
   }, [graph, gs.pastLen, gs.futureLen, undo, redo, selections, setSelections])
 
-  useEffect(() => {
-    if (!dragging || !mapRef.current) return
-    const map = mapRef.current.getMap()
-    const canvas = map.getCanvas()
-    canvas.style.cursor = 'grabbing'
-    const preDrag = graphRef.current
-    // If the dragged node is part of a multi-selection, the whole group moves
-    // together by the same lat/lon delta. Snapshot every selected node's
-    // origin position so we can compute deltas from there each frame.
-    const selIds = selections.filter(r => r.type === 'node').map(r => r.id)
-    const moveIds = selIds.includes(dragging) && selIds.length > 1 ? selIds : [dragging]
-    const origin = new Map<string, [number, number]>()
-    for (const id of moveIds) {
-      const n = preDrag.nodes.find(x => x.id === id)
-      if (n) origin.set(id, [n.pos[0], n.pos[1]])
-    }
-    const anchor = origin.get(dragging)!
-    let moved = false
-    const onMove = (ev: MouseEvent) => {
-      const rect = canvas.getBoundingClientRect()
-      const { lng, lat } = map.unproject([ev.clientX - rect.left, ev.clientY - rect.top])
-      const dLat = lat - anchor[0]
-      const dLon = lng - anchor[1]
-      if (!moved) { pushHistory(preDrag); moved = true }
-      setGraph(g => ({
-        ...g,
-        nodes: g.nodes.map(n => {
-          const start = origin.get(n.id)
-          return start ? { ...n, pos: [start[0] + dLat, start[1] + dLon] as [number, number] } : n
-        }),
-      }))
-    }
-    const onUp = () => {
-      setDragging(null)
-      canvas.style.cursor = ''
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-    return () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-      canvas.style.cursor = ''
-    }
-  }, [dragging, selections, setGraph, pushHistory])
-
   const { theme } = useTheme()
 
   return (
@@ -376,16 +248,16 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
       <div className="map-container" style={{ position: 'relative' }}>
         {(() => {
           const modified = graph !== initialGraph
-          const showBadge = edgeSource || modified
+          const showBadge = interaction.edgeSource || modified
           if (!showBadge) return null
           return <div style={{
             position: 'absolute', top: 8, left: 8, zIndex: 21,
             display: 'flex', gap: 4, alignItems: 'center',
           }}>
-            {edgeSource && <div style={{
+            {interaction.edgeSource && <div style={{
               background: 'rgba(245, 158, 11, 0.95)', color: '#111',
               padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-            }}>edge from {edgeSource} — click dest</div>}
+            }}>edge from {interaction.edgeSource} — click dest</div>}
             {modified && <button onClick={() => { pushGraph(initialGraph); setSelections([]); sessionStorage.removeItem(ssKey) }} title="Reset to original graph"
               style={{
                 background: 'rgba(239, 68, 68, 0.9)', color: '#fff',
@@ -493,7 +365,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
               addEdge={addEdge}
               deleteEdge={deleteEdge}
               reverseEdge={reverseEdge}
-              setEdgeSource={setEdgeSource}
+              setEdgeSource={interaction.setEdgeSource}
               setSelections={setSelections}
               applyEdgeStyle={applyEdgeStyle}
               applyEdgeWeight={applyEdgeWeight}
@@ -505,24 +377,23 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
           initialViewState={{ longitude: llz.lng, latitude: llz.lat, zoom: llz.zoom }}
           style={{ width: '100%', height: '100%' }}
           mapStyle={MAP_STYLES[theme]}
-          onMove={dragging ? undefined : onMove}
-          onMouseMove={dragging ? undefined : onHover}
-          onMouseDown={onNodeDragStart}
-          onDblClick={onMapDblClick}
-          onClick={onMapClick}
-          onMouseLeave={() => setTooltip(null)}
+          onMove={drag.dragging ? undefined : onMove}
+          onMouseMove={drag.dragging ? undefined : interaction.onHover}
+          onMouseDown={drag.onDragStart}
+          onDblClick={interaction.onDblClick}
+          onClick={interaction.onClick}
+          onMouseLeave={() => {}}
           interactiveLayerIds={[
             ...(showRing ? ['ring-edge-lines', 'ring-edge-labels', 'ring-circles'] : []),
-            'node-circles',
-            'flows-fill',
-            'edge-centerlines-hit',
+            ...interaction.interactiveLayerIds,
           ]}
-          dragPan={!dragging}
+          dragPan={drag.dragPan}
         >
           <Source id="flows" type="geojson" data={geojson}>
             <Layer id="flows-fill" type="fill" paint={{
               'fill-color': ['get', 'color'],
               'fill-opacity': ['*', opacity, ['coalesce', ['get', 'opacity'], 1]],
+              'fill-antialias': false,
             }} />
           </Source>
           {edgeCenterlines && (
@@ -628,19 +499,19 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             </Source>
           )}
         </MapGL>
-        {tooltip && (
-          <div style={{ position: 'absolute', left: tooltip.x + 10, top: tooltip.y - 10, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px', borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10 }}>{tooltip.text}</div>
+        {interaction.tooltip && (
+          <div style={{ position: 'absolute', left: interaction.tooltip.x + 10, top: interaction.tooltip.y - 10, background: 'rgba(0,0,0,0.85)', color: '#fff', padding: '4px 8px', borderRadius: 4, fontSize: 11, whiteSpace: 'pre', pointerEvents: 'none', zIndex: 10 }}>{interaction.tooltip.text}</div>
         )}
-        {edgeSource && cursor && (() => {
-          const src = graph.nodes.find(n => n.id === edgeSource)
+        {interaction.edgeSource && interaction.cursor && (() => {
+          const src = graph.nodes.find(n => n.id === interaction.edgeSource)
           const map = mapRef.current?.getMap?.()
           if (!src || !map) return null
           const sp = map.project([src.pos[1], src.pos[0]])
           return (
             <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 23 }}>
-              <line x1={sp.x} y1={sp.y} x2={cursor.x} y2={cursor.y}
+              <line x1={sp.x} y1={sp.y} x2={interaction.cursor!.x} y2={interaction.cursor!.y}
                 stroke="#f59e0b" strokeWidth={2} strokeDasharray="6 4" opacity={0.85} />
-              <circle cx={cursor.x} cy={cursor.y} r={5} fill="none" stroke="#f59e0b" strokeWidth={1.5} />
+              <circle cx={interaction.cursor!.x} cy={interaction.cursor!.y} r={5} fill="none" stroke="#f59e0b" strokeWidth={1.5} />
             </svg>
           )
         })()}
@@ -651,16 +522,13 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
             <NodeOverlay
               key={node.id}
               nodeId={node.id}
-              label={node.label ?? ''}
               bearing={round(node.bearing ?? 90)}
               pos={node.pos}
               velocity={node.velocity}
               refLat={refLat}
               mapRef={mapRef}
-              onBeginRotate={() => pushHistory(graphRef.current)}
-              onRotateTransient={b => setGraph(g => ({ ...g, nodes: g.nodes.map(n => n.id === node.id ? { ...n, bearing: b } : n) }))}
-              onBeginVelocity={() => pushHistory(graphRef.current)}
-              onVelocityTransient={v => setGraph(g => ({ ...g, nodes: g.nodes.map(n => n.id === node.id ? { ...n, velocity: v } : n) }))}
+              onBeginDrag={() => pushHistory(graphRef.current)}
+              onDragTransient={(b, v) => setGraph(g => ({ ...g, nodes: g.nodes.map(n => n.id === node.id ? { ...n, bearing: b, velocity: v } : n) }))}
               onResetVelocity={() => updateNode(node.id, { velocity: undefined } as any)}
             />
           )

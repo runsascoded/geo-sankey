@@ -13,7 +13,6 @@ import {
   getEdgeMidpoint,
   getNodeVelocity,
   getSelections,
-  getSelectedLabel,
   isSelected,
   mapClick,
   mapDblClick,
@@ -34,12 +33,7 @@ beforeEach(async () => {
 afterEach(async () => { await page?.close() })
 
 describe('selection', () => {
-  it('shows overlay label for selected node', async () => {
-    const label = await getSelectedLabel(page)
-    expect(label).toBe('Origin')
-  })
-
-  it('shows rotation handle with bearing label', async () => {
+  it('shows tangent handle with bearing label', async () => {
     const pos = await getRotHandlePos(page)
     expect(pos).not.toBeNull()
     const bearing = await getSelectedBearing(page)
@@ -51,8 +45,8 @@ describe('selection', () => {
     // Click an area on the map with no node
     await mapClick(page, 600, 400)
     expect(await isSelected(page, 'origin')).toBe(false)
-    // Overlay should be gone
-    expect(await getSelectedLabel(page)).toBeNull()
+    // Tangent handle should be gone
+    expect(await getRotHandlePos(page)).toBeNull()
   })
 
   it('selects a different node on click', async () => {

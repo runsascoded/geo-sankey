@@ -3,27 +3,27 @@ import FlowMapView from '../FlowMapView'
 
 const graph: FlowGraph = {
   nodes: [
-    { id: 'hob-so',    pos: [40.7359, -74.0320], bearing: 90, label: 'Hob So' },
-    { id: 'hob-14',    pos: [40.7520, -74.0280], bearing: 90, label: 'Hob 14th' },
-    { id: 'whk',       pos: [40.7771, -74.0160], bearing: 130, label: 'Weehawken' },
-    { id: 'ph',        pos: [40.7100, -74.0380], bearing: 60, label: 'Paulus Hook' },
-    { id: 'hob-split', pos: [40.7359, -74.0240], bearing: 90 },
-    { id: 'ut-merge',  pos: [40.7530, -74.0190], bearing: 30 },
-    { id: 'dt-merge',  pos: [40.7100, -74.0240], bearing: 90 },
-    { id: 'mt-merge',  pos: [40.7590, -74.0080], bearing: 110 },
-    { id: 'mt39',      pos: [40.7570, -73.9980], bearing: 110, label: 'MT 39th St' },
-    { id: 'bpt',       pos: [40.7100, -74.0140], bearing: 90, label: 'Brookfield Place' },
+    { id: 'bpt',       pos: [40.71500873644837, -74.01763141805306], bearing: 100, label: 'Brookfield Place' },
+    { id: 'dt-merge',  pos: [40.715562912131446, -74.02118470868655], bearing: 104 },
+    { id: 'hob-14',    pos: [40.75391277970118, -74.0231608871139], bearing: 100, velocity: 0.007159651779943488, label: 'Hob 14th' },
+    { id: 'hob-so',    pos: [40.73536254629653, -74.02793860498223], bearing: 104, velocity: 0.002403020923443469, label: 'Hob So' },
+    { id: 'hob-split', pos: [40.73492379942883, -74.0255833826839], bearing: 101 },
+    { id: 'mt-merge',  pos: [40.75994551185576, -74.00787150192113], bearing: 110 },
+    { id: 'mt39',      pos: [40.7574314723291, -73.99965492075728], bearing: 110, label: 'MT 39th St' },
+    { id: 'ph',        pos: [40.71386196262006, -74.03248345388602], bearing: 100, label: 'Paulus Hook' },
+    { id: 'ut-merge',  pos: [40.75667266380634, -74.01384177043765], bearing: 30 },
+    { id: 'whk',       pos: [40.77684409809737, -74.01108054584255], bearing: 116, velocity: 0.013192930858358846, label: 'Weehawken' },
   ],
   edges: [
-    { from: 'hob-so', to: 'hob-split', weight: 30 },
-    { from: 'hob-split', to: 'ut-merge', weight: 15 },
-    { from: 'hob-split', to: 'dt-merge', weight: 15 },
+    { from: 'dt-merge', to: 'bpt', weight: 'auto' },
     { from: 'hob-14', to: 'ut-merge', weight: 20 },
-    { from: 'ut-merge', to: 'mt-merge', weight: 'auto' },
-    { from: 'whk', to: 'mt-merge', weight: 30 },
+    { from: 'hob-so', to: 'hob-split', weight: 30 },
+    { from: 'hob-split', to: 'dt-merge', weight: 15 },
+    { from: 'hob-split', to: 'ut-merge', weight: 15 },
     { from: 'mt-merge', to: 'mt39', weight: 'auto' },
     { from: 'ph', to: 'dt-merge', weight: 20 },
-    { from: 'dt-merge', to: 'bpt', weight: 'auto' },
+    { from: 'ut-merge', to: 'mt-merge', weight: 'auto' },
+    { from: 'whk', to: 'mt-merge', weight: 30 },
   ],
 }
 
@@ -36,7 +36,7 @@ export default function HBTFerry() {
       color="#14B8A6"
       pxPerWeight={0.15}
       refLat={40.740}
-      defaults={{ lat: 40.7427, lng: -74.0142, zoom: 12.94 }}
+      defaults={{ lat: 40.723, lng: -74.001, zoom: 13.16 }}
       defaultNodes={1}
     />
   )

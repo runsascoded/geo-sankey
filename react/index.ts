@@ -8,6 +8,12 @@ export type { UseGraphSelection, SelectionRef, NodeRole } from './hooks/useGraph
 export { useGraphMutations } from './hooks/useGraphMutations'
 export type { UseGraphMutations } from './hooks/useGraphMutations'
 
+export { useNodeDrag } from './hooks/useNodeDrag'
+export type { UseNodeDrag } from './hooks/useNodeDrag'
+
+export { useMapInteraction } from './hooks/useMapInteraction'
+export type { UseMapInteraction } from './hooks/useMapInteraction'
+
 export { useSceneIO } from './hooks/useSceneIO'
 export type { UseSceneIO, UseSceneIOArgs } from './hooks/useSceneIO'
 

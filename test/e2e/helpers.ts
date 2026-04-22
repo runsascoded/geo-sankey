@@ -106,20 +106,9 @@ export async function getRotHandlePos(page: Page): Promise<{ x: number; y: numbe
   })
 }
 
-/** Velocity handle is the diamond-shaped draggable (rotate(45deg)). */
-export async function getVelHandlePos(page: Page): Promise<{ x: number; y: number } | null> {
-  return page.evaluate(() => {
-    const divs = document.querySelectorAll('.map-container div[style]')
-    for (const d of divs) {
-      const style = (d as HTMLElement).style
-      if (style.cursor === 'grab' && style.transform.includes('rotate(45deg)')) {
-        const r = (d as HTMLElement).getBoundingClientRect()
-        return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-      }
-    }
-    return null
-  })
-}
+/** Tangent handle (unified bearing+velocity). Same as rotation handle
+ *  since they're now merged into one circle. */
+export const getVelHandlePos = getRotHandlePos
 
 /** Midpoint of the first edge's centerline in viewport pixel coords. */
 export async function getEdgeMidpoint(page: Page, from: string, to: string): Promise<{ x: number; y: number } | null> {
@@ -149,21 +138,6 @@ export async function getNodeVelocity(page: Page, id: string): Promise<number | 
     const n = g?.nodes?.find((x: any) => x.id === nodeId)
     return n?.velocity
   }, id)
-}
-
-export async function getSelectedLabel(page: Page): Promise<string | null> {
-  return page.evaluate(() => {
-    // Find the node-label overlay div (non-expanded form shows label text)
-    const divs = document.querySelectorAll('.map-container div[style]')
-    for (const d of divs) {
-      const s = (d as HTMLElement).style
-      if (s.position === 'absolute' && s.cursor === 'default') {
-        const span = d.querySelector('span')
-        return span?.textContent ?? null
-      }
-    }
-    return null
-  })
 }
 
 export async function isSelected(page: Page, nodeId: string): Promise<boolean> {

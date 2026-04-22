@@ -1,9 +1,10 @@
 # Composable React Hooks for geo-sankey
 
 > **Status (2026-04):** Phase 1 (extract hooks) and Phase 2 (promote to
-> `geo-sankey/react` subpath) are **done**. Three hooks + reference
-> components live in `react/`. Phase 3 (turnkey `<FlowEditor>` component)
-> is deferred.
+> `geo-sankey/react` subpath) are **done**. All five hooks
+> (`useGraphState`, `useGraphSelection`, `useGraphMutations`, `useNodeDrag`,
+> `useMapInteraction`) + reference components live in `react/`. Phase 3
+> (turnkey `<FlowEditor>` component) is deferred.
 
 ## Problem
 

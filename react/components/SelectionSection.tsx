@@ -1,7 +1,39 @@
+import { useState, useEffect } from 'react'
 import type { FlowGraph, GFlowNode, GFlowEdge } from 'geo-sankey'
 import { Row, Slider } from './Drawer'
 
 const { round } = Math
+
+/** Number input that only commits on blur / Enter, to avoid firing updates
+ *  (and history entries) on every intermediate keystroke. Escape reverts. */
+function NumberInput({ value, onCommit, step, style, placeholder, allowEmpty }: {
+  value: number | undefined
+  onCommit: (v: number | undefined) => void
+  step?: string
+  style?: React.CSSProperties
+  placeholder?: string
+  allowEmpty?: boolean
+}) {
+  const [draft, setDraft] = useState<string>(value == null ? '' : String(value))
+  const [focused, setFocused] = useState(false)
+  useEffect(() => { if (!focused) setDraft(value == null ? '' : String(value)) }, [value, focused])
+  const commit = () => {
+    if (draft === '') { if (allowEmpty) onCommit(undefined); return }
+    const v = parseFloat(draft)
+    if (!Number.isNaN(v) && v !== value) onCommit(v)
+  }
+  return (
+    <input style={style} type="number" step={step} placeholder={placeholder}
+      value={draft}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); commit() }}
+      onChange={e => setDraft(e.target.value)}
+      onKeyDown={e => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+        else if (e.key === 'Escape') { setDraft(value == null ? '' : String(value)); (e.target as HTMLInputElement).blur() }
+      }} />
+  )
+}
 
 export type SelectionRef = { type: 'node'; id: string } | { type: 'edge'; from: string; to: string }
 
@@ -115,22 +147,22 @@ function SingleNodeFields({
         onChange={e => updateNode(node.id, { label: e.target.value || undefined } as any)} />
     </Row>
     <Row label="Lat">
-      <input style={inputStyle} type="number" step="0.0001" value={node.pos[0]}
-        onChange={e => updateNode(node.id, { pos: [parseFloat(e.target.value), node.pos[1]] })} />
+      <NumberInput style={inputStyle} step="0.0001" value={node.pos[0]}
+        onCommit={v => { if (v != null) updateNode(node.id, { pos: [v, node.pos[1]] }) }} />
     </Row>
     <Row label="Lon">
-      <input style={inputStyle} type="number" step="0.0001" value={node.pos[1]}
-        onChange={e => updateNode(node.id, { pos: [node.pos[0], parseFloat(e.target.value)] })} />
+      <NumberInput style={inputStyle} step="0.0001" value={node.pos[1]}
+        onCommit={v => { if (v != null) updateNode(node.id, { pos: [node.pos[0], v] }) }} />
     </Row>
     <Row label="Bearing">
-      <input style={inputStyle} type="number" step="1" value={round(node.bearing ?? 90)}
-        onChange={e => updateNode(node.id, { bearing: parseFloat(e.target.value) || 0 })} />
+      <NumberInput style={inputStyle} step="1" value={round(node.bearing ?? 90)}
+        onCommit={v => { if (v != null) updateNode(node.id, { bearing: v }) }} />
     </Row>
     <Row label="Velocity">
       <div style={{ display: 'flex', gap: 4, width: '100%' }}>
-        <input style={{ ...inputStyle, flex: 1 }} type="number" step="0.0001"
-          value={node.velocity ?? ''} placeholder="auto"
-          onChange={e => updateNode(node.id, { velocity: e.target.value === '' ? undefined : parseFloat(e.target.value) } as any)} />
+        <NumberInput style={{ ...inputStyle, flex: 1 }} step="0.0001" placeholder="auto" allowEmpty
+          value={node.velocity}
+          onCommit={v => updateNode(node.id, { velocity: v } as any)} />
         <button onClick={() => updateNode(node.id, { velocity: undefined } as any)}
           title="Reset to auto" style={{ fontSize: 10, padding: '0 6px' }}>×</button>
       </div>
