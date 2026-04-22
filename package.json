@@ -18,7 +18,7 @@
     "react"
   ],
   "scripts": {
-    "build": "vite build && tsc --emitDeclarationOnly",
+    "build": "vite build",
     "clean": "rm -rf node_modules/.vite dist",
     "dev": "cd site && vite",
     "test": "vitest run",

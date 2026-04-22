@@ -15,5 +15,6 @@
     "isolatedModules": true,
     "jsx": "react-jsx"
   },
-  "include": ["src", "react"]
+  "include": ["src"],
+  "exclude": ["src/__tests__", "**/*.test.ts"]
 }

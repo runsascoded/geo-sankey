@@ -1,0 +1,36 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+  build-dist:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main'
+    uses: runsascoded/npm-dist/.github/workflows/build-dist.yml@v1
+    with:
+      preserve_dirs: react
+      exports_map: '{"./src/index.ts": {"types": "./index.d.ts", "import": "./index.js"}}'
+      pkg_kvs: |
+        {
+          "main": "./index.js",
+          "module": "./index.js",
+          "types": "./index.d.ts"
+        }

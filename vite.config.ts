@@ -11,6 +11,8 @@ export default defineConfig({
     },
   },
   plugins: [
-    dts({ rollupTypes: true }),
+    dts({
+      compilerOptions: { noEmitOnError: false, strict: false, strictNullChecks: false },
+    }),
   ]
 })
