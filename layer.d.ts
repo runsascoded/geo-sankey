@@ -4,7 +4,6 @@
  *  object is a spec-compliant paint expression that MapLibre and Mapbox
  *  both accept.
  */
-
 /** Default paint props for a flow-ribbon fill layer.
  *
  *  The only non-obvious default is `fill-antialias: false`. MapLibre's
@@ -21,11 +20,4 @@
  *    <Layer id="flows-fill" type="fill"
  *           paint={flowFillPaint({ 'fill-opacity': 0.85 })} />
  */
-export function flowFillPaint(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    'fill-color': ['get', 'color'],
-    'fill-opacity': 1,
-    'fill-antialias': false,
-    ...overrides,
-  }
-}
+export declare function flowFillPaint(overrides?: Record<string, unknown>): Record<string, unknown>;
