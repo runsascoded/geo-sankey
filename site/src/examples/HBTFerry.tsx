@@ -36,7 +36,7 @@ export default function HBTFerry() {
       color="#14B8A6"
       pxPerWeight={0.15}
       refLat={40.740}
-      defaults={{ lat: 40.723, lng: -74.001, zoom: 13.16 }}
+      defaults={{ lat: 40.7449, lng: -74.0007, zoom: 13.07 }}
       defaultNodes={1}
     />
   )

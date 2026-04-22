@@ -52,6 +52,31 @@ header h1 {
   font-weight: 700;
 }
 
+header .tagline {
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+  margin-left: -1rem;
+}
+
+header .header-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+header .header-right a {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-muted);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+header .header-right a:hover {
+  color: var(--fg);
+}
+
 nav {
   display: flex;
   gap: 0.25rem;
@@ -119,6 +144,142 @@ main {
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--border);
+}
+
+.about {
+  height: 100%;
+  overflow-y: auto;
+  padding: 2rem 1.5rem 4rem;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.about section {
+  margin-bottom: 2.5rem;
+}
+
+.about-hero h2 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  line-height: 1.3;
+}
+
+.about-hero p {
+  font-size: 1rem;
+  color: var(--fg-muted);
+  max-width: 70ch;
+  line-height: 1.6;
+}
+
+.about-cta {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.about-cta a {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border-hover);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--fg);
+  text-decoration: none;
+  font-size: 0.9rem;
+  transition: background 0.15s;
+}
+
+.about-cta a:hover {
+  background: var(--border);
+}
+
+.about-demo-map {
+  height: 420px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.about-demo-map > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.about-caption {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+
+.about-caption kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8em;
+  padding: 1px 4px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-surface);
+}
+
+.about-usage h3,
+.about-examples h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  margin-top: 1.25rem;
+}
+
+.about-usage pre {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.about-usage code {
+  font-family: ui-monospace, monospace;
+}
+
+.about-usage p {
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+  margin-top: 0.75rem;
+  line-height: 1.6;
+}
+
+.about-usage p code {
+  background: var(--bg-surface);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.about-examples ul {
+  list-style: none;
+  padding: 0;
+}
+
+.about-examples li {
+  padding: 0.5rem 0;
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+}
+
+.about-examples a {
+  color: var(--fg);
+  font-weight: 500;
+  text-decoration: none;
+  border-bottom: 1px solid var(--border-hover);
+}
+
+.about-examples a:hover {
+  border-bottom-color: var(--fg);
 }
 
 .map-container .maplibregl-ctrl-attrib {
