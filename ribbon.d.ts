@@ -1,14 +1,31 @@
 import { LatLon } from './types';
-export interface RibbonArrowOpts {
+/** Default `wing` / `angle` for arrowhead geometry. Demo + downstream
+ *  apps converged on these values; they read more "arrowy" than the
+ *  prior `0.4 / 45°` defaults. Pass `wing = 0.4, angle = 45` explicitly
+ *  for the spear-shaped earlier look. */
+export declare const DEFAULT_WING = 0.65;
+export declare const DEFAULT_ANGLE = 60;
+/** Compute `arrowWingFactor` / `arrowLenFactor` from a `wing` / `angle`
+ *  pair. Use this when calling the bare `ribbonArrow*` helpers so the
+ *  result matches the `FlowGraph*` codepath. */
+export declare function resolveArrowDefaults(opts?: {
+    wing?: number;
+    angle?: number;
+}): {
     arrowWingFactor: number;
     arrowLenFactor: number;
+};
+export interface RibbonArrowOpts {
+    /** Optional: omit to use lib defaults (`wing = 0.65, angle = 60`). */
+    arrowWingFactor?: number;
+    arrowLenFactor?: number;
     widthPx?: number;
     /** Max fraction of path length the arrow can occupy. Default 0.4. */
     maxArrowFraction?: number;
 }
 /** Build a ribbon polygon with integrated arrowhead.
  *  Returns GeoJSON [lng, lat][] ring (closed). */
-export declare function ribbonArrow(path: LatLon[], halfW: number, refLat: number, opts: RibbonArrowOpts): [number, number][];
+export declare function ribbonArrow(path: LatLon[], halfW: number, refLat: number, opts?: RibbonArrowOpts): [number, number][];
 /** Build a ribbon polygon WITHOUT arrowhead. */
 export declare function ribbon(path: LatLon[], halfW: number, refLat: number): [number, number][];
 /** Return left/right edges separately (same direction as path), without closing into a ring. */
@@ -17,7 +34,7 @@ export declare function ribbonEdges(path: LatLon[], halfW: number, refLat: numbe
     right: [number, number][];
 };
 /** Return left/right edges and arrow tip separately for stitching into a single polygon. */
-export declare function ribbonArrowEdges(path: LatLon[], halfW: number, refLat: number, opts: RibbonArrowOpts): {
+export declare function ribbonArrowEdges(path: LatLon[], halfW: number, refLat: number, opts?: RibbonArrowOpts): {
     left: [number, number][];
     right: [number, number][];
     tip: [number, number];

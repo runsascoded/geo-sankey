@@ -1,6 +1,6 @@
 {
   "name": "geo-sankey",
-  "version": "0.1.0-dist.c623407",
+  "version": "0.1.0-dist.a532f75",
   "description": "Pure-geometry library for geographic flow maps: width-proportional ribbon polygons with merge/split layout",
   "homepage": "https://geo-sankey.rbw.sh",
   "repository": "runsascoded/geo-sankey",
@@ -14,7 +14,10 @@
       "types": "./index.d.ts",
       "import": "./index.js"
     },
-    "./react": "./react/index.ts"
+    "./react": {
+      "types": "./react/index.d.ts",
+      "import": "./react/index.js"
+    }
   },
   "peerDependencies": {
     "react": ">=18"
