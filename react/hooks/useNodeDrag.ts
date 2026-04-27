@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { FlowGraph } from 'geo-sankey'
 import type { UseGraphState } from './useGraphState'
 import type { UseGraphSelection } from './useGraphSelection'
 

@@ -19,7 +19,6 @@ interface Props {
 }
 
 const HANDLE_DEFAULT_PX = 60
-const HANDLE_MIN_PX = 20
 
 export default function NodeOverlay({ bearing, pos, velocity, refLat, mapRef, onBeginDrag, onDragTransient, onResetVelocity }: Props) {
   const [screenPos, setScreenPos] = useState<{ x: number; y: number } | null>(null)

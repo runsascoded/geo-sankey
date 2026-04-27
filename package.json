@@ -18,7 +18,7 @@
     "react"
   ],
   "scripts": {
-    "build": "vite build && cp -r react dist/react",
+    "build": "vite build && mv dist/src/* dist/ && rmdir dist/src",
     "clean": "rm -rf node_modules/.vite dist",
     "dev": "cd site && vite",
     "test": "vitest run",
@@ -27,6 +27,7 @@
   },
   "devDependencies": {
     "@types/geojson": "^7946.0.16",
+    "@types/react": "^19.0.0",
     "puppeteer-core": "^24.40.0",
     "scrns": "^0.3.0",
     "typescript": "^5.7.0",

@@ -72,7 +72,7 @@ const targetSelectStyle: React.CSSProperties = {
 }
 
 export default function SelectionSection({
-  graph, selections, selectedNodes, selectedEdges, resolvedWeights, singlePoly,
+  graph, selectedNodes, selectedEdges, resolvedWeights, singlePoly,
   nodeRoleOf, aggEdge,
   updateNode, renameNode, deleteNode, addEdge, deleteEdge, reverseEdge,
   setEdgeSource, setSelections, applyEdgeStyle, applyEdgeWeight,

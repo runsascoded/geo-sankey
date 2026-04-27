@@ -18,6 +18,9 @@ importers:
       '@types/geojson':
         specifier: ^7946.0.16
         version: 7946.0.16
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.14
       puppeteer-core:
         specifier: ^24.40.0
         version: 24.40.0

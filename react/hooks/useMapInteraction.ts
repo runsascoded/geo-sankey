@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import type { UseGraphSelection, SelectionRef } from './useGraphSelection'
+import type { UseGraphSelection } from './useGraphSelection'
 import type { UseGraphMutations } from './useGraphMutations'
 
 export interface UseMapInteraction {

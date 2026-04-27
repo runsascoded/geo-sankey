@@ -1,7 +1,6 @@
 import { useCallback } from 'react'
-import type { FlowGraph } from 'geo-sankey'
 import type { UseGraphState } from './useGraphState'
-import type { UseGraphSelection, SelectionRef } from './useGraphSelection'
+import type { UseGraphSelection } from './useGraphSelection'
 
 export interface UseGraphMutations {
   renameNode: (oldId: string, newId: string) => void

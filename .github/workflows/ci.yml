@@ -67,9 +67,13 @@ jobs:
     if: github.ref == 'refs/heads/main'
     uses: runsascoded/npm-dist/.github/workflows/build-dist.yml@v1
     with:
-      # `dist/` includes built src/ + a copy of react/ (see `build` in package.json).
+      # Vite emits a multi-entry build: dist/{index,react/index}.{js,d.ts}.
       # Default mode (no preserve_dirs) flattens dist/* to the dist branch root.
-      exports_map: '{"./src/index.ts": {"types": "./index.d.ts", "import": "./index.js"}}'
+      exports_map: |
+        {
+          "./src/index.ts":   {"types": "./index.d.ts",       "import": "./index.js"},
+          "./react/index.ts": {"types": "./react/index.d.ts", "import": "./react/index.js"}
+        }
       pkg_kvs: |
         {
           "main": "./index.js",
