@@ -79,7 +79,7 @@ export default function FlowMapView({ graph: initialGraph, title, description, c
   const [showNodes, setShowNodes] = useUrlState('nodes', intParam(defaultNodes))
   const [showGraph, setShowGraph] = useUrlState('graph', boolParam)
   const [opacity, setOpacity] = useUrlState('o', numParam(initialOpts.opacity ?? 0.8))
-  const [wing, setWing] = useUrlState('w', numParam(initialOpts.wing ?? 0.5))
+  const [wing, setWing] = useUrlState('w', numParam(initialOpts.wing ?? 0.65))
   const [angle, setAngle] = useUrlState('ang', intParam(initialOpts.angle ?? 60))
   const [bezierN, setBezierN] = useUrlState('bn', intParam(initialOpts.bezierN ?? 20))
   const [nodeApproach, setNodeApproach] = useUrlState('na', numParam(initialOpts.nodeApproach ?? 0.5))

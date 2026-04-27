@@ -53,7 +53,6 @@ export default function About() {
             refLat={40.735}
             defaults={{ lat: 40.7304, lng: -73.9996, zoom: 12.34 }}
             defaultNodes={2}
-            initialOpts={{ wing: 0.65 }}
           />
         </div>
         <p className="about-caption">

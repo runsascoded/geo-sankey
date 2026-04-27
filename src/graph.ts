@@ -1,7 +1,7 @@
 import type { LatLon } from './types'
 import { lngScale, pxToHalfDeg, pxToDeg, degPerPxZ12 } from './geo'
 import { directedBezier, perpAt } from './path'
-import { ribbon, ribbonArrow, ribbonEdges, ribbonArrowEdges, ringFeature } from './ribbon'
+import { ribbon, ribbonArrow, ribbonEdges, ribbonArrowEdges, ringFeature, resolveArrowDefaults } from './ribbon'
 import type { RibbonArrowOpts } from './ribbon'
 
 const { cos, sin, PI, max } = Math
@@ -68,8 +68,8 @@ export interface FlowGraphOpts {
   color: string
   arrowWing?: number        // wing width multiplier (derived from wing+angle if not set)
   arrowLen?: number         // arrow length multiplier (derived from wing+angle if not set)
-  wing?: number             // wing extension as fraction of stem width, one side (default 0.3)
-  angle?: number            // wingtip half-angle in degrees (default 45, range 1-60)
+  wing?: number             // wing extension as fraction of stem width, one side (default 0.65)
+  angle?: number            // wingtip half-angle in degrees (default 60, range 1-60)
   minArrowWingPx?: number   // minimum wing extension in px beyond trunk edge, default 0
   plugBearingDeg?: number   // bearing convergence for crevice plugging, default 1
   plugFraction?: number     // distance convergence for crevice plugging, default 0.3
@@ -166,17 +166,14 @@ function creaseIntersection(
   return null
 }
 
-/** Resolve arrowhead params: wing/angle take precedence over arrowWing/arrowLen.
- *  angle = half-angle at the arrow tip (pointy end). */
+/** Resolve arrowhead params for a `FlowGraphOpts`: explicit `arrowWing`/
+ *  `arrowLen` overrides win, otherwise derive from `wing` / `angle`. */
 function resolveArrow(opts: FlowGraphOpts): { arrowWing: number; arrowLen: number } {
-  const wing = opts.wing ?? 0.4
-  const angle = opts.angle ?? 45
-  const arrowWing = opts.arrowWing ?? (1 + 2 * wing)
-  // angle = internal angle at each wingtip (between wing edge and base line)
-  // tan(angle) = arrowH / wingW, where wingW = arrowWing * halfW
-  // arrowLen = arrowH / (2 * halfW) = arrowWing * tan(angle) / 2
-  const arrowLen = opts.arrowLen ?? (arrowWing * Math.tan(angle * PI / 180) / 2)
-  return { arrowWing, arrowLen }
+  const { arrowWingFactor, arrowLenFactor } = resolveArrowDefaults(opts)
+  return {
+    arrowWing: opts.arrowWing ?? arrowWingFactor,
+    arrowLen: opts.arrowLen ?? arrowLenFactor,
+  }
 }
 
 // --- Internal types ---

@@ -9,7 +9,7 @@ export {
   fwdAt,
   bearingPerpLeft,
 } from './path'
-export { ribbon, ribbonArrow, ribbonEdges, ribbonArrowEdges, ringFeature } from './ribbon'
+export { ribbon, ribbonArrow, ribbonEdges, ribbonArrowEdges, ringFeature, resolveArrowDefaults, DEFAULT_WING, DEFAULT_ANGLE } from './ribbon'
 export type { RibbonArrowOpts } from './ribbon'
 export {
   nodeWeight,

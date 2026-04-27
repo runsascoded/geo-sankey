@@ -4,9 +4,32 @@ import { perpAt, fwdAt } from './path'
 
 const { sqrt, max, min, ceil, PI } = Math
 
+/** Default `wing` / `angle` for arrowhead geometry. Demo + downstream
+ *  apps converged on these values; they read more "arrowy" than the
+ *  prior `0.4 / 45°` defaults. Pass `wing = 0.4, angle = 45` explicitly
+ *  for the spear-shaped earlier look. */
+export const DEFAULT_WING = 0.65
+export const DEFAULT_ANGLE = 60
+
+/** Compute `arrowWingFactor` / `arrowLenFactor` from a `wing` / `angle`
+ *  pair. Use this when calling the bare `ribbonArrow*` helpers so the
+ *  result matches the `FlowGraph*` codepath. */
+export function resolveArrowDefaults(opts: { wing?: number; angle?: number } = {}):
+  { arrowWingFactor: number; arrowLenFactor: number } {
+  const wing = opts.wing ?? DEFAULT_WING
+  const angle = opts.angle ?? DEFAULT_ANGLE
+  const arrowWingFactor = 1 + 2 * wing
+  // angle = internal angle at each wingtip (between wing edge and base line)
+  // tan(angle) = arrowH / wingW, where wingW = arrowWingFactor * halfW
+  // arrowLenFactor = arrowH / (2 * halfW) = arrowWingFactor * tan(angle) / 2
+  const arrowLenFactor = arrowWingFactor * Math.tan(angle * PI / 180) / 2
+  return { arrowWingFactor, arrowLenFactor }
+}
+
 export interface RibbonArrowOpts {
-  arrowWingFactor: number
-  arrowLenFactor: number
+  /** Optional: omit to use lib defaults (`wing = 0.65, angle = 60`). */
+  arrowWingFactor?: number
+  arrowLenFactor?: number
   widthPx?: number
   /** Max fraction of path length the arrow can occupy. Default 0.4. */
   maxArrowFraction?: number
@@ -18,9 +41,12 @@ export function ribbonArrow(
   path: LatLon[],
   halfW: number,
   refLat: number,
-  opts: RibbonArrowOpts,
+  opts: RibbonArrowOpts = {},
 ): [number, number][] {
-  const { arrowWingFactor, arrowLenFactor, widthPx } = opts
+  const defaults = resolveArrowDefaults()
+  const arrowWingFactor = opts.arrowWingFactor ?? defaults.arrowWingFactor
+  const arrowLenFactor = opts.arrowLenFactor ?? defaults.arrowLenFactor
+  const { widthPx } = opts
   const n = path.length
   if (n < 2) return []
   const cumLen = [0]
@@ -109,12 +135,15 @@ export function ribbonEdges(path: LatLon[], halfW: number, refLat: number): {
 }
 
 /** Return left/right edges and arrow tip separately for stitching into a single polygon. */
-export function ribbonArrowEdges(path: LatLon[], halfW: number, refLat: number, opts: RibbonArrowOpts): {
+export function ribbonArrowEdges(path: LatLon[], halfW: number, refLat: number, opts: RibbonArrowOpts = {}): {
   left: [number, number][]
   right: [number, number][]
   tip: [number, number]
 } {
-  const { arrowWingFactor, arrowLenFactor, widthPx } = opts
+  const defaults = resolveArrowDefaults()
+  const arrowWingFactor = opts.arrowWingFactor ?? defaults.arrowWingFactor
+  const arrowLenFactor = opts.arrowLenFactor ?? defaults.arrowLenFactor
+  const { widthPx } = opts
   const n = path.length
   if (n < 2) return { left: [], right: [], tip: [0, 0] }
   const cumLen = [0]
